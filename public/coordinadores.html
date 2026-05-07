@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Coordinadores WhatsApp</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --surface: #ffffff;
+      --surface-2: #f1f5f9;
+      --text: #111827;
+      --muted: #64748b;
+      --border: #d8dee8;
+      --blue: #2563eb;
+      --green: #16a34a;
+      --red: #dc2626;
+      --yellow: #b45309;
+      --purple: #7c3aed;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 28px));
+      margin: 24px auto 44px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    .span-12 { grid-column: span 12; }
+    .span-8 { grid-column: span 8; }
+    .span-4 { grid-column: span 4; }
+    .span-3 { grid-column: span 3; }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .panel-title h2 {
+      margin: 0;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+
+    .panel-title span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .metric {
+      min-height: 112px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .metric-value {
+      margin-top: 8px;
+      font-size: 32px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .metric.blue .metric-value { color: var(--blue); }
+    .metric.green .metric-value { color: var(--green); }
+    .metric.red .metric-value { color: var(--red); }
+    .metric.purple .metric-value { color: var(--purple); }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    button {
+      border: 0;
+      border-radius: var(--radius);
+      padding: 11px 15px;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 750;
+      cursor: pointer;
+      min-height: 42px;
+    }
+
+    button:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: var(--blue);
+      color: #fff;
+    }
+
+    .btn-secondary {
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-yellow {
+      background: #fef3c7;
+      color: #78350f;
+    }
+
+    .btn-green {
+      background: #dcfce7;
+      color: #14532d;
+    }
+
+    .btn-red {
+      background: #fee2e2;
+      color: #7f1d1d;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 8px 11px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    .status-pill.running {
+      background: #dcfce7;
+      border-color: #bbf7d0;
+      color: #166534;
+    }
+
+    .status-pill.paused {
+      background: #fef3c7;
+      border-color: #fde68a;
+      color: #92400e;
+    }
+
+    .status-pill.stopping {
+      background: #fee2e2;
+      border-color: #fecaca;
+      color: #991b1b;
+    }
+
+    .message-preview {
+      display: grid;
+      gap: 10px;
+    }
+
+    .message-box {
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      border-radius: var(--radius);
+      padding: 13px;
+      line-height: 1.45;
+      color: #1f2937;
+      min-height: 52px;
+      word-break: break-word;
+    }
+
+    .progress-text {
+      min-height: 24px;
+      font-weight: 750;
+      margin-bottom: 12px;
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 12px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e2e8f0;
+      border: 1px solid #cbd5e1;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--green), var(--blue));
+      transition: width 0.25s ease;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .pill {
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: #334155;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .history-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .run-item {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 13px;
+      background: #fff;
+    }
+
+    .run-title {
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .run-meta {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .empty {
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      color: var(--muted);
+      text-align: center;
+      background: var(--surface-2);
+    }
+
+    .status-line {
+      margin-top: 12px;
+      min-height: 20px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      .span-8,
+      .span-4,
+      .span-3 {
+        grid-column: span 12;
+      }
+
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>Coordinadores</h1>
+        <p class="subtitle">Sheet: Coordinadores · limite 30 por corrida · delays 1 min / 2 min</p>
+      </div>
+      <div class="actions">
+        <span id="flow-status" class="status-pill">Estado: inactivo</span>
+        <button class="btn-secondary" onclick="loadHistory()">Actualizar</button>
+      </div>
+    </header>
+
+    <section class="grid">
+      <div class="panel metric blue span-3">
+        <div class="metric-label">Encontrados</div>
+        <div id="metric-found" class="metric-value">0</div>
+      </div>
+      <div class="panel metric green span-3">
+        <div class="metric-label">Contactados</div>
+        <div id="metric-contactados" class="metric-value">0</div>
+      </div>
+      <div class="panel metric red span-3">
+        <div class="metric-label">Invalidos</div>
+        <div id="metric-invalidos" class="metric-value">0</div>
+      </div>
+      <div class="panel metric purple span-3">
+        <div class="metric-label">Duplicados</div>
+        <div id="metric-duplicados" class="metric-value">0</div>
+      </div>
+
+      <div class="panel span-8">
+        <div class="panel-title">
+          <h2>Corrida</h2>
+          <span id="progress-meta">Esperando inicio</span>
+        </div>
+
+        <div class="message-preview">
+          <div class="message-box" id="first-message-preview">
+            Buenas {nombre}. Como estas? Todo bien? Te escribo para coordinar la capacitacion con jugadores y STAFF del club.
+          </div>
+          <div class="message-box" id="second-message-preview"></div>
+        </div>
+
+        <div class="actions" style="margin-top:14px;">
+          <button id="run-button" class="btn-primary" onclick="runCoordinadores()">Correr coordinadores</button>
+          <button id="pause-button" class="btn-yellow" onclick="controlFlow('pause')" style="display:none;">Pausar</button>
+          <button id="resume-button" class="btn-green" onclick="controlFlow('resume')" style="display:none;">Reanudar</button>
+          <button id="stop-button" class="btn-red" onclick="controlFlow('stop')" style="display:none;">Detener</button>
+        </div>
+
+        <div id="status-line" class="status-line"></div>
+      </div>
+
+      <div class="panel span-4">
+        <div class="panel-title">
+          <h2>Reglas</h2>
+          <span>Actual</span>
+        </div>
+        <div class="pill-row">
+          <div class="pill">Estado vacio</div>
+          <div class="pill">Telefono unico</div>
+          <div class="pill">30 por corrida</div>
+          <div class="pill">Marca contactado</div>
+          <div class="pill">M: fecha</div>
+          <div class="pill">N: estado</div>
+        </div>
+      </div>
+
+      <div class="panel span-12">
+        <div class="panel-title">
+          <h2>Progreso</h2>
+          <span id="progress-count">0 / 0</span>
+        </div>
+        <div id="progress-text" class="progress-text">Todavia no hay una ejecucion en curso.</div>
+        <div class="progress-track">
+          <div id="progress-bar" class="progress-bar"></div>
+        </div>
+        <div class="pill-row">
+          <div class="pill">Encontrados: <span id="progress-found">0</span></div>
+          <div class="pill">Contactados: <span id="progress-contactados">0</span></div>
+          <div class="pill">Invalidos: <span id="progress-invalidos">0</span></div>
+          <div class="pill">Duplicados: <span id="progress-duplicados">0</span></div>
+          <div class="pill">Errores: <span id="progress-errores">0</span></div>
+        </div>
+      </div>
+
+      <div class="panel span-12">
+        <div class="panel-title">
+          <h2>Historial</h2>
+          <span id="history-count">0 registros</span>
+        </div>
+        <div id="history-list" class="history-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const flowType = "coordinadores";
+    let flowState = { status: "idle", startedAt: null };
+
+    function getSuggestedSecondMessage(date = new Date()) {
+      const dayTargets = { 1: 3, 2: 4, 3: 5, 4: 1, 5: 2 };
+      const dayNames = { 1: "lunes", 2: "martes", 3: "miercoles", 4: "jueves", 5: "viernes" };
+      const currentDay = date.getDay();
+      const targetDay = dayTargets[currentDay] || 1;
+      let daysToAdd = (targetDay - currentDay + 7) % 7;
+      if (daysToAdd === 0) daysToAdd = 7;
+
+      const targetDate = new Date(date);
+      targetDate.setDate(date.getDate() + daysToAdd);
+
+      const dd = String(targetDate.getDate()).padStart(2, "0");
+      const mm = String(targetDate.getMonth() + 1).padStart(2, "0");
+
+      return `Te queda comodo el dia ${dayNames[targetDay]} ${dd}-${mm} entre la franja horaria 8 a 17?`;
+    }
+
+    function formatDate(dateStr) {
+      const date = new Date(dateStr);
+      if (Number.isNaN(date.getTime())) return "-";
+      return date.toLocaleString("es-AR", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+
+    function setStatus(message) {
+      document.getElementById("status-line").textContent = message || "";
+    }
+
+    function setMetric(id, value) {
+      document.getElementById(id).textContent = value ?? 0;
+    }
+
+    function getSentCount(item) {
+      return item.contactados?.length || item.coordinadores?.length || 0;
+    }
+
+    function getInvalidCount(item) {
+      return item.invalidos?.length || 0;
+    }
+
+    function getDuplicateCount(item) {
+      return item.duplicados?.length || 0;
+    }
+
+    function getErrorCount(item) {
+      return item.errores?.length || 0;
+    }
+
+    function updateFlowButtons() {
+      const status = flowState.status || "idle";
+      const statusBox = document.getElementById("flow-status");
+      const run = document.getElementById("run-button");
+      const pause = document.getElementById("pause-button");
+      const resume = document.getElementById("resume-button");
+      const stop = document.getElementById("stop-button");
+
+      statusBox.className = `status-pill ${status}`;
+      statusBox.textContent =
+        status === "running" ? "Estado: ejecutando" :
+        status === "paused" ? "Estado: pausado" :
+        status === "stopping" ? "Estado: deteniendo" :
+        "Estado: inactivo";
+
+      if (status === "running") {
+        run.style.display = "none";
+        pause.style.display = "inline-flex";
+        resume.style.display = "none";
+        stop.style.display = "inline-flex";
+      } else if (status === "paused") {
+        run.style.display = "none";
+        pause.style.display = "none";
+        resume.style.display = "inline-flex";
+        stop.style.display = "inline-flex";
+      } else if (status === "stopping") {
+        run.style.display = "none";
+        pause.style.display = "none";
+        resume.style.display = "none";
+        stop.style.display = "inline-flex";
+        stop.disabled = true;
+      } else {
+        run.style.display = "inline-flex";
+        pause.style.display = "none";
+        resume.style.display = "none";
+        stop.style.display = "none";
+        stop.disabled = false;
+      }
+    }
+
+    function applyControlSnapshot(snapshot) {
+      if (!snapshot?.[flowType]) return;
+      flowState = {
+        status: snapshot[flowType].status || "idle",
+        startedAt: snapshot[flowType].startedAt || null,
+      };
+      updateFlowButtons();
+    }
+
+    async function loadControlState() {
+      try {
+        const res = await fetch("/api/control-state");
+        if (!res.ok) return;
+        const data = await res.json();
+        applyControlSnapshot(data);
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    async function controlFlow(action) {
+      try {
+        const res = await fetch(`/api/control/${flowType}/${action}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "No se pudo cambiar el estado");
+        flowState = { status: data.state.status, startedAt: data.state.startedAt || null };
+        updateFlowButtons();
+      } catch (error) {
+        setStatus(error.message);
+      }
+    }
+
+    function updateProgress(data) {
+      if (data.step === "control_snapshot") {
+        applyControlSnapshot(data.flows);
+        return;
+      }
+
+      if (data.type && data.type !== flowType) return;
+
+      if (data.controlStatus) {
+        flowState = { ...flowState, status: data.controlStatus };
+        updateFlowButtons();
+      }
+
+      const total = data.total ?? Number(document.getElementById("progress-found").textContent || 0);
+      const current = data.current ?? 0;
+      const contactados = data.contactados ?? Number(document.getElementById("progress-contactados").textContent || 0);
+      const invalidos = data.invalidos ?? Number(document.getElementById("progress-invalidos").textContent || 0);
+      const duplicados = data.duplicados ?? Number(document.getElementById("progress-duplicados").textContent || 0);
+      const errores = data.errores ?? Number(document.getElementById("progress-errores").textContent || 0);
+
+      setMetric("metric-found", total);
+      setMetric("metric-contactados", contactados);
+      setMetric("metric-invalidos", invalidos);
+      setMetric("metric-duplicados", duplicados);
+
+      document.getElementById("progress-found").textContent = total;
+      document.getElementById("progress-contactados").textContent = contactados;
+      document.getElementById("progress-invalidos").textContent = invalidos;
+      document.getElementById("progress-duplicados").textContent = duplicados;
+      document.getElementById("progress-errores").textContent = errores;
+
+      if (data.secondMessage) {
+        document.getElementById("second-message-preview").textContent = data.secondMessage;
+      }
+
+      const text = document.getElementById("progress-text");
+      const meta = document.getElementById("progress-meta");
+      const count = document.getElementById("progress-count");
+      const bar = document.getElementById("progress-bar");
+
+      if (data.step === "starting") {
+        text.textContent = data.message || "Iniciando...";
+        meta.textContent = "Preparando";
+        count.textContent = "0 / 0";
+        bar.style.width = "3%";
+      }
+
+      if (data.step === "rows_ready" || data.step === "preclean_done") {
+        text.textContent = data.message || "Contactos listos";
+        meta.textContent = `${total} encontrados`;
+        count.textContent = `0 / ${total}`;
+        bar.style.width = "8%";
+      }
+
+      if (data.step === "processing") {
+        const percent = total ? Math.max(10, (current / total) * 100) : 10;
+        text.textContent = `${data.message || "Procesando"} · ${data.name || ""}`;
+        meta.textContent = data.club || "";
+        count.textContent = `${current} / ${total}`;
+        bar.style.width = `${percent}%`;
+      }
+
+      if (data.step === "between_messages" || data.step === "between_chats") {
+        text.textContent = data.message || "Esperando delay";
+      }
+
+      if (data.step === "item_success") {
+        const percent = total ? (current / total) * 100 : 100;
+        text.textContent = `Enviado correctamente a ${data.name || "contacto"}`;
+        count.textContent = `${current} / ${total}`;
+        bar.style.width = `${percent}%`;
+      }
+
+      if (data.step === "item_invalid") {
+        const percent = total ? (current / total) * 100 : 100;
+        text.textContent = `Telefono invalido: ${data.name || "contacto"}`;
+        count.textContent = `${current} / ${total}`;
+        bar.style.width = `${percent}%`;
+      }
+
+      if (data.step === "item_error") {
+        const percent = total ? (current / total) * 100 : 100;
+        text.textContent = `Error con ${data.name || "contacto"}: ${data.reason || "sin detalle"}`;
+        count.textContent = `${current} / ${total}`;
+        bar.style.width = `${percent}%`;
+      }
+
+      if (data.step === "paused") {
+        text.textContent = data.message || "Proceso pausado";
+        meta.textContent = "Pausado";
+      }
+
+      if (data.step === "resumed") {
+        text.textContent = data.message || "Proceso reanudado";
+        meta.textContent = "Reanudado";
+      }
+
+      if (data.step === "stopping") {
+        text.textContent = data.message || "Deteniendo...";
+        meta.textContent = "Deteniendo";
+      }
+
+      if (data.step === "done" || data.step === "finished") {
+        text.textContent = "Proceso finalizado";
+        meta.textContent = "Completado";
+        bar.style.width = "100%";
+        flowState = { status: "idle", startedAt: null };
+        updateFlowButtons();
+        loadHistory();
+      }
+
+      if (data.step === "failed") {
+        text.textContent = `Error general: ${data.message || "sin detalle"}`;
+        meta.textContent = "Fallo";
+        bar.style.width = "100%";
+        flowState = { status: "idle", startedAt: null };
+        updateFlowButtons();
+      }
+    }
+
+    async function runCoordinadores() {
+      try {
+        flowState = { status: "running", startedAt: new Date().toISOString() };
+        updateFlowButtons();
+        updateProgress({
+          type: flowType,
+          step: "starting",
+          total: 0,
+          contactados: 0,
+          invalidos: 0,
+          duplicados: 0,
+          errores: 0,
+          secondMessage: getSuggestedSecondMessage(),
+          message: "Iniciando coordinadores..."
+        });
+        setStatus("Ejecutando coordinadores...");
+
+        const res = await fetch("/api/run-coordinadores", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || "No se pudo ejecutar coordinadores");
+
+        setStatus(
+          `Resultado: ${getSentCount(result)} contactados, ${getInvalidCount(result)} invalidos, ${getDuplicateCount(result)} duplicados y ${getErrorCount(result)} errores.`
+        );
+        await loadHistory();
+      } catch (error) {
+        setStatus(error.message || "Hubo un error.");
+      }
+    }
+
+    async function loadHistory() {
+      try {
+        const res = await fetch("/api/history");
+        const data = await res.json();
+        const runs = Array.isArray(data)
+          ? data.filter((item) => item.type === flowType)
+          : [];
+        const list = document.getElementById("history-list");
+        document.getElementById("history-count").textContent =
+          `${runs.length} ${runs.length === 1 ? "registro" : "registros"}`;
+
+        if (!runs.length) {
+          list.innerHTML = `<div class="empty">Sin corridas guardadas.</div>`;
+          return;
+        }
+
+        list.innerHTML = runs.slice(0, 12).map((item) => `
+          <div class="run-item">
+            <div class="run-title">${formatDate(item.date)}</div>
+            <div class="run-meta">
+              Contactados: ${getSentCount(item)} · Invalidos: ${getInvalidCount(item)} · Duplicados: ${getDuplicateCount(item)} · Errores: ${getErrorCount(item)}
+              ${item.stoppedByLimit ? " · limite alcanzado" : ""}
+            </div>
+            <div class="run-meta">${item.secondMessage || item.message || ""}</div>
+          </div>
+        `).join("");
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    document.getElementById("second-message-preview").textContent = getSuggestedSecondMessage();
+
+    const progressSource = new EventSource("/api/progress");
+    progressSource.onmessage = function(event) {
+      updateProgress(JSON.parse(event.data));
+    };
+    progressSource.onerror = function(error) {
+      console.error("SSE error", error);
+    };
+
+    loadControlState();
+    loadHistory();
+    updateFlowButtons();
+  </script>
+</body>
+</html>

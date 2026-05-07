@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+credentials.json
+
+# WhatsApp / browser session data
+session/
+
+# Local runtime data
+data/history.json
+*.log
+start.sh
+
+# OS/editor noise
+.DS_Store
+.vscode/
+.idea/
+
+# Build/cache output
+dist/
+build/
+coverage/
