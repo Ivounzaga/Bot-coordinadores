@@ -26,11 +26,19 @@ function appendHistory(entry) {
 }
 
 let clients = [];
+let lastProgressByType = {};
 
 function sendProgress(payload) {
   const timestamp = new Date().toLocaleString("es-AR");
 
   console.log(`[PROGRESS ${timestamp}]`, JSON.stringify(payload, null, 2));
+
+  if (payload?.type) {
+    lastProgressByType[payload.type] = {
+      ...payload,
+      timestamp: new Date().toISOString(),
+    };
+  }
 
   const data = `data: ${JSON.stringify(payload)}\n\n`;
   clients.forEach((client) => client.write(data));
@@ -320,6 +328,18 @@ app.get("/api/control-state", (req, res) => {
   });
 });
 
+app.get("/api/progress-state", (req, res) => {
+  res.json({
+    flows: {
+      initial: getPublicFlowState("initial"),
+      followup: getPublicFlowState("followup"),
+      reminder: getPublicFlowState("reminder"),
+      coordinadores: getPublicFlowState("coordinadores"),
+    },
+    lastProgress: lastProgressByType,
+  });
+});
+
 app.post("/api/control/:type/:action", (req, res) => {
   try {
     const type = String(req.params.type || "").trim();
@@ -606,7 +626,6 @@ app.post("/api/run-coordinadores", async (req, res) => {
   try {
     console.log("[COORDINADORES] endpoint llamado");
 
-    const { runCoordinadoresScript } = require("./runner");
     const control = createFlowControl(type);
 
     sendProgress(wrapProgress(type, {
@@ -614,37 +633,60 @@ app.post("/api/run-coordinadores", async (req, res) => {
       message: "Iniciando coordinadores..."
     }));
 
-    const runPromise = runCoordinadoresScript((progress) => {
-      sendProgress(wrapProgress(type, progress));
-    }, { control });
+    const runPromise = new Promise((resolve, reject) => {
+      setImmediate(() => {
+        const { runCoordinadoresScript } = require("./runner");
+
+        runCoordinadoresScript((progress) => {
+          sendProgress(wrapProgress(type, progress));
+        }, { control }).then(resolve, reject);
+      });
+    });
 
     getFlowState(type).currentRunPromise = runPromise;
 
-    const result = await runPromise;
+    runPromise
+      .then((result) => {
+        const historyEntry = {
+          ...result,
+          type: "coordinadores",
+          message: result.secondMessage || result.message || "",
+          coordinadores: result.contactados || [],
+        };
 
-    const historyEntry = {
-      ...result,
-      type: "coordinadores",
-      message: result.secondMessage || result.message || "",
-      coordinadores: result.contactados || [],
-    };
+        appendHistory(historyEntry);
 
-    appendHistory(historyEntry);
+        sendProgress(wrapProgress(type, {
+          step: "finished",
+          summary: {
+            total: historyEntry.total || 0,
+            contactados: historyEntry.contactados?.length || 0,
+            invalidos: historyEntry.invalidos?.length || 0,
+            duplicados: historyEntry.duplicados?.length || 0,
+            errores: historyEntry.errores?.length || 0
+          }
+        }));
 
-    sendProgress(wrapProgress(type, {
-      step: "finished",
-      summary: {
-        total: historyEntry.total || 0,
-        contactados: historyEntry.contactados?.length || 0,
-        invalidos: historyEntry.invalidos?.length || 0,
-        duplicados: historyEntry.duplicados?.length || 0,
-        errores: historyEntry.errores?.length || 0
-      }
-    }));
+        finishFlow(type);
+      })
+      .catch((error) => {
+        console.error("[COORDINADORES] error:", error);
 
-    finishFlow(type);
+        sendProgress(wrapProgress(type, {
+          step: error.code === "MANUAL_STOP" ? "stopped" : "failed",
+          message: error.message
+        }));
 
-    res.json(historyEntry);
+        finishFlow(type, {
+          lastError: error.message,
+        });
+      });
+
+    res.status(202).json({
+      started: true,
+      state: getPublicFlowState(type),
+      message: "Corrida de coordinadores iniciada",
+    });
   } catch (error) {
     console.error("[COORDINADORES] error:", error);
 

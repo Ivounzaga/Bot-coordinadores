@@ -604,6 +604,7 @@
         data.step === "chat_opening" ||
         data.step === "chat_loading" ||
         data.step === "chat_retry" ||
+        data.step === "whatsapp_loading" ||
         data.step === "qr_waiting"
       ) {
         text.textContent = data.message || "Abriendo chat...";
@@ -693,10 +694,19 @@
         const result = await res.json();
         if (!res.ok) throw new Error(result.error || "No se pudo ejecutar coordinadores");
 
-        setStatus(
-          `Resultado: ${getSentCount(result)} contactados, ${getInvalidCount(result)} invalidos, ${getDuplicateCount(result)} duplicados y ${getErrorCount(result)} errores.`
-        );
-        await loadHistory();
+        if (result.started) {
+          flowState = {
+            status: result.state?.status || "running",
+            startedAt: result.state?.startedAt || flowState.startedAt,
+          };
+          updateFlowButtons();
+          setStatus("Corrida iniciada. Podes seguir el progreso en esta pantalla.");
+        } else {
+          setStatus(
+            `Resultado: ${getSentCount(result)} contactados, ${getInvalidCount(result)} invalidos, ${getDuplicateCount(result)} duplicados y ${getErrorCount(result)} errores.`
+          );
+          await loadHistory();
+        }
       } catch (error) {
         setStatus(error.message || "Hubo un error.");
       }

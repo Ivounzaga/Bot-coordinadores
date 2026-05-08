@@ -219,7 +219,7 @@ function resolveFirstMessage(name, rowNumber) {
 }
 
 function buildWhatsAppUrl(phone) {
-  return `https://web.whatsapp.com/send?phone=${phone}`;
+  return `https://web.whatsapp.com/send/?phone=${phone}&type=phone_number&app_absent=0`;
 }
 
 async function getSheetsClient() {
@@ -364,6 +364,11 @@ async function waitForWhatsApp(page) {
 
 async function getComposer(page) {
   const selectors = [
+    '[contenteditable="true"][role="textbox"][aria-placeholder]',
+    '[contenteditable="true"][aria-placeholder="Escribe un mensaje"]',
+    '[contenteditable="true"][aria-placeholder="Type a message"]',
+    '[aria-label^="Escribir un mensaje"]',
+    '[aria-label^="Type a message"]',
     '#main footer [contenteditable="true"]',
     'footer [contenteditable="true"][role="textbox"]',
     'footer [contenteditable="true"]',
@@ -421,7 +426,10 @@ async function clickSend(page) {
   const selectors = [
     '[data-testid="send"]',
     'button[aria-label="Enviar"]',
+    'button[aria-label="Enviar mensaje"]',
     'button[aria-label="Send"]',
+    'button[aria-label="Send message"]',
+    'button span[data-icon="send"]',
   ];
 
   for (const selector of selectors) {
@@ -489,9 +497,148 @@ async function getWhatsAppLoadingLabel(page) {
   }).catch(() => "");
 }
 
+async function isWhatsAppShellLoaded(page) {
+  return await page.evaluate(() => {
+    const text = document.body?.innerText || "";
+    const title = document.title || "";
+
+    if (/Cargando tus chats|Loading your chats|No cierres esta ventana|Don't close this window/i.test(text)) {
+      return false;
+    }
+
+    const hasKnownShell = [
+      "#pane-side",
+      '[aria-label="Lista de chats"]',
+      '[aria-label="Chat list"]',
+      '[data-testid="chat-list"]',
+    ].some((selector) => document.querySelector(selector));
+
+    const hasLoadedAppText = /WhatsApp/i.test(title) && (
+      /Todos|No leidos|No leídos|Favoritos|Grupos|Chats|Buscar|Search|Unread/i.test(text) ||
+      text.length > 250
+    );
+
+    return hasKnownShell || hasLoadedAppText;
+  }).catch(() => false);
+}
+
+async function waitForWhatsAppShellReady(page, control, sendProgress) {
+  const startedAt = Date.now();
+  let lastProgressAt = 0;
+  let qrAlreadyReported = false;
+
+  while (Date.now() - startedAt < CHAT_READY_TIMEOUT_MS) {
+    await controlCheckpoint(control, sendProgress);
+
+    if (await isQrVisible(page)) {
+      if (!qrAlreadyReported) {
+        qrAlreadyReported = true;
+        sendProgress({
+          type: "coordinadores",
+          step: "qr_waiting",
+          message: "WhatsApp pide QR. Escanealo para continuar.",
+        });
+      }
+
+      await controlledSleep(control, 1500, sendProgress);
+      continue;
+    }
+
+    if (await isWhatsAppShellLoaded(page)) {
+      return;
+    }
+
+    const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+    if (elapsedSeconds - lastProgressAt >= 10) {
+      lastProgressAt = elapsedSeconds;
+      const loadingLabel = await getWhatsAppLoadingLabel(page);
+      sendProgress({
+        type: "coordinadores",
+        step: "whatsapp_loading",
+        message: loadingLabel
+          ? `${loadingLabel}. Esperando WhatsApp... ${elapsedSeconds}s`
+          : `Cargando WhatsApp... ${elapsedSeconds}s`,
+      });
+    }
+
+    await controlledSleep(control, 1000, sendProgress);
+  }
+
+  throw new Error(`Timeout cargando WhatsApp despues de ${Math.round(CHAT_READY_TIMEOUT_MS / 60000)} minutos`);
+}
+
+async function getActiveChatSignature(page) {
+  return await page.evaluate(() => {
+    const selectors = [
+      "#main header span[title]",
+      "#main header [title]",
+      "#main header",
+    ];
+
+    for (const selector of selectors) {
+      const el = document.querySelector(selector);
+      const text = (el?.getAttribute("title") || el?.innerText || "").trim();
+      if (text) return text.replace(/\s+/g, " ");
+    }
+
+    return "";
+  }).catch(() => "");
+}
+
+async function getComposerSignature(page) {
+  return await page.evaluate(() => {
+    const selectors = [
+      '[contenteditable="true"][role="textbox"][aria-placeholder]',
+      '[contenteditable="true"][aria-placeholder]',
+      '[aria-label^="Escribir un mensaje"]',
+      '[aria-label^="Type a message"]',
+      '#main footer [contenteditable="true"]',
+      'footer [contenteditable="true"]',
+    ];
+
+    const isVisible = (el) => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden"
+      );
+    };
+
+    for (const selector of selectors) {
+      const el = Array.from(document.querySelectorAll(selector)).find(isVisible);
+      const text = (
+        el?.getAttribute("aria-label") ||
+        el?.getAttribute("aria-placeholder") ||
+        el?.innerText ||
+        ""
+      ).trim();
+
+      if (text) return text.replace(/\s+/g, " ");
+    }
+
+    return "";
+  }).catch(() => "");
+}
+
+function signatureMatchesPhone(signature, phone) {
+  const signatureDigits = digitsFromValue(signature);
+  const phoneDigits = digitsFromValue(phone);
+  const suffix = phoneDigits.slice(-8);
+
+  return suffix.length >= 8 && signatureDigits.includes(suffix);
+}
+
 async function hasMessageComposer(page) {
   return await page.evaluate(() => {
     const selectors = [
+      '[contenteditable="true"][role="textbox"][aria-placeholder]',
+      '[contenteditable="true"][aria-placeholder="Escribe un mensaje"]',
+      '[contenteditable="true"][aria-placeholder="Type a message"]',
+      '[aria-label^="Escribir un mensaje"]',
+      '[aria-label^="Type a message"]',
       '#main footer [contenteditable="true"]',
       'footer [contenteditable="true"][role="textbox"]',
       'footer [contenteditable="true"]',
@@ -517,10 +664,12 @@ async function hasMessageComposer(page) {
   });
 }
 
-async function waitForChatReady(page, item, control, sendProgress) {
+async function waitForChatReady(page, item, control, sendProgress, options = {}) {
   const startedAt = Date.now();
   let lastProgressAt = 0;
   let qrAlreadyReported = false;
+  let chatTargetAlreadyReported = false;
+  const previousSignature = options.previousSignature || "";
 
   while (Date.now() - startedAt < CHAT_READY_TIMEOUT_MS) {
     await controlCheckpoint(control, sendProgress);
@@ -547,7 +696,34 @@ async function waitForChatReady(page, item, control, sendProgress) {
     }
 
     if (await hasMessageComposer(page)) {
-      return;
+      const currentSignature = await getActiveChatSignature(page);
+      const composerSignature = await getComposerSignature(page);
+      const currentUrl = page.url();
+      const urlIncludesPhone = decodeURIComponent(currentUrl).includes(item.phone);
+      const signatureChanged = Boolean(
+        previousSignature &&
+        currentSignature &&
+        currentSignature !== previousSignature
+      );
+      const signatureMatches = signatureMatchesPhone(currentSignature, item.phone);
+      const composerMatches = signatureMatchesPhone(composerSignature, item.phone);
+      const chatConfirmed = urlIncludesPhone || signatureChanged || signatureMatches || composerMatches;
+
+      if (chatConfirmed) {
+        return;
+      }
+
+      if (!chatTargetAlreadyReported) {
+        chatTargetAlreadyReported = true;
+        sendProgress({
+          type: "coordinadores",
+          step: "chat_loading",
+          name: item.name,
+          club: item.club,
+          rowNumber: item.rowNumber,
+          message: `WhatsApp cargo, esperando que abra el chat correcto de ${item.name}`,
+        });
+      }
     }
 
     const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
@@ -577,6 +753,8 @@ async function openChat(page, item, url, control, sendProgress) {
 
   for (let attempt = 1; attempt <= CHAT_OPEN_RETRIES; attempt++) {
     try {
+      const previousSignature = await getActiveChatSignature(page);
+
       sendProgress({
         type: "coordinadores",
         step: "chat_opening",
@@ -591,7 +769,8 @@ async function openChat(page, item, url, control, sendProgress) {
         waitUntil: "domcontentloaded",
         timeout: NAVIGATION_TIMEOUT_MS,
       });
-      await waitForChatReady(page, item, control, sendProgress);
+      await controlledSleep(control, 3000, sendProgress);
+      await waitForChatReady(page, item, control, sendProgress, { previousSignature });
       return;
     } catch (err) {
       if (err.code === "MANUAL_STOP" || err.message === INVALID_STATUS) {
@@ -790,7 +969,20 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
     const page = await browser.newPage();
     page.setDefaultTimeout(CHAT_READY_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
-    console.log("[COORDINADORES] navegador listo; abro directo cada chat por telefono");
+    console.log("[COORDINADORES] navegador listo; espero carga inicial de WhatsApp");
+    sendProgress({
+      type: "coordinadores",
+      step: "whatsapp_loading",
+      message: "Abriendo WhatsApp y esperando la carga inicial de chats",
+    });
+
+    await page.goto("https://web.whatsapp.com/", {
+      waitUntil: "domcontentloaded",
+      timeout: NAVIGATION_TIMEOUT_MS,
+    });
+    await waitForWhatsAppShellReady(page, control, sendProgress);
+
+    console.log("[COORDINADORES] WhatsApp cargado; abro cada chat por telefono");
 
     for (let i = 0; i < rows.length; i++) {
       await controlCheckpoint(control, sendProgress);
