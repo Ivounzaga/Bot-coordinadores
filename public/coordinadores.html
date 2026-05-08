@@ -600,6 +600,16 @@
         bar.style.width = `${percent}%`;
       }
 
+      if (
+        data.step === "chat_opening" ||
+        data.step === "chat_loading" ||
+        data.step === "chat_retry" ||
+        data.step === "qr_waiting"
+      ) {
+        text.textContent = data.message || "Abriendo chat...";
+        meta.textContent = data.club || data.name || "WhatsApp";
+      }
+
       if (data.step === "between_messages" || data.step === "between_chats") {
         text.textContent = data.message || "Esperando delay";
       }

@@ -29,7 +29,10 @@ const INVALID_STATUS = "Telefono invalido";
 const MAX_CONTACTS_PER_RUN = 30;
 const BETWEEN_MESSAGES_DELAY_MS = 60 * 1000;
 const BETWEEN_CHATS_DELAY_MS = 2 * 60 * 1000;
-const CHAT_LOAD_DELAY_MS = 6000;
+const NAVIGATION_TIMEOUT_MS = 120 * 1000;
+const CHAT_READY_TIMEOUT_MS = 180 * 1000;
+const CHAT_OPEN_RETRIES = 2;
+const CHAT_RETRY_DELAY_MS = 15 * 1000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -360,12 +363,58 @@ async function waitForWhatsApp(page) {
 }
 
 async function getComposer(page) {
+  const selectors = [
+    '#main footer [contenteditable="true"]',
+    'footer [contenteditable="true"][role="textbox"]',
+    'footer [contenteditable="true"]',
+    '[aria-label="Escribe un mensaje"]',
+    '[aria-label="Type a message"]',
+  ];
+
+  for (const selector of selectors) {
+    const box = await page.waitForSelector(selector, {
+      timeout: 5000,
+      visible: true,
+    }).catch(() => null);
+
+    if (box) return box;
+  }
+
   await page.waitForFunction(() => {
-    return document.querySelectorAll('[contenteditable="true"]').length > 0;
-  }, { timeout: 60000 });
+    const main = document.querySelector("#main");
+    const boxes = Array.from(document.querySelectorAll('[contenteditable="true"]'));
+
+    return boxes.some((box) => {
+      const rect = box.getBoundingClientRect();
+      const style = window.getComputedStyle(box);
+      const visible =
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden";
+
+      return visible && (!main || main.contains(box));
+    });
+  }, { timeout: CHAT_READY_TIMEOUT_MS });
 
   const boxes = await page.$$('[contenteditable="true"]');
-  return boxes[boxes.length - 1];
+
+  for (let i = boxes.length - 1; i >= 0; i--) {
+    const isVisible = await boxes[i].evaluate((box) => {
+      const rect = box.getBoundingClientRect();
+      const style = window.getComputedStyle(box);
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden"
+      );
+    });
+
+    if (isVisible) return boxes[i];
+  }
+
+  throw new Error("No se encontro la caja de mensaje");
 }
 
 async function clickSend(page) {
@@ -401,6 +450,155 @@ async function isInvalidWhatsAppNumber(page) {
     const bodyText = (document.body?.innerText || "").toLowerCase();
     return patterns.some((pattern) => bodyText.includes(pattern));
   }, patterns);
+}
+
+async function isQrVisible(page) {
+  return await page.evaluate(() => {
+    const text = (document.body?.innerText || "").toLowerCase();
+    const canvasVisible = Array.from(document.querySelectorAll("canvas")).some((canvas) => {
+      const rect = canvas.getBoundingClientRect();
+      return rect.width > 120 && rect.height > 120;
+    });
+
+    return (
+      canvasVisible ||
+      text.includes("usa whatsapp en tu computadora") ||
+      text.includes("use whatsapp on your computer") ||
+      text.includes("vincular con el numero de telefono") ||
+      text.includes("link with phone number")
+    );
+  });
+}
+
+async function hasMessageComposer(page) {
+  return await page.evaluate(() => {
+    const selectors = [
+      '#main footer [contenteditable="true"]',
+      'footer [contenteditable="true"][role="textbox"]',
+      'footer [contenteditable="true"]',
+      '[aria-label="Escribe un mensaje"]',
+      '[aria-label="Type a message"]',
+    ];
+
+    const isVisible = (el) => {
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden"
+      );
+    };
+
+    return selectors.some((selector) => {
+      return Array.from(document.querySelectorAll(selector)).some(isVisible);
+    });
+  });
+}
+
+async function waitForChatReady(page, item, control, sendProgress) {
+  const startedAt = Date.now();
+  let lastProgressAt = 0;
+  let qrAlreadyReported = false;
+
+  while (Date.now() - startedAt < CHAT_READY_TIMEOUT_MS) {
+    await controlCheckpoint(control, sendProgress);
+
+    if (await isQrVisible(page)) {
+      if (!qrAlreadyReported) {
+        qrAlreadyReported = true;
+        sendProgress({
+          type: "coordinadores",
+          step: "qr_waiting",
+          name: item.name,
+          club: item.club,
+          rowNumber: item.rowNumber,
+          message: "WhatsApp pide QR. Escanealo para continuar.",
+        });
+      }
+
+      await controlledSleep(control, 1500, sendProgress);
+      continue;
+    }
+
+    if (await isInvalidWhatsAppNumber(page)) {
+      throw new Error(INVALID_STATUS);
+    }
+
+    if (await hasMessageComposer(page)) {
+      return;
+    }
+
+    const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+    if (elapsedSeconds - lastProgressAt >= 10) {
+      lastProgressAt = elapsedSeconds;
+      sendProgress({
+        type: "coordinadores",
+        step: "chat_loading",
+        name: item.name,
+        club: item.club,
+        rowNumber: item.rowNumber,
+        message: `Cargando WhatsApp/chat de ${item.name}... ${elapsedSeconds}s`,
+      });
+    }
+
+    await controlledSleep(control, 1000, sendProgress);
+  }
+
+  throw new Error(`Timeout cargando WhatsApp o el chat despues de ${CHAT_READY_TIMEOUT_MS / 1000}s`);
+}
+
+async function openChat(page, item, url, control, sendProgress) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= CHAT_OPEN_RETRIES; attempt++) {
+    try {
+      sendProgress({
+        type: "coordinadores",
+        step: "chat_opening",
+        name: item.name,
+        club: item.club,
+        rowNumber: item.rowNumber,
+        message: `Abriendo chat de ${item.name} (${attempt}/${CHAT_OPEN_RETRIES})`,
+      });
+
+      await controlCheckpoint(control, sendProgress);
+      await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: NAVIGATION_TIMEOUT_MS,
+      });
+      await waitForChatReady(page, item, control, sendProgress);
+      return;
+    } catch (err) {
+      if (err.code === "MANUAL_STOP" || err.message === INVALID_STATUS) {
+        throw err;
+      }
+
+      lastError = err;
+      console.error("[COORDINADORES][CHAT OPEN ERROR]", {
+        rowNumber: item.rowNumber,
+        name: item.name,
+        attempt,
+        error: err.message,
+      });
+
+      if (attempt < CHAT_OPEN_RETRIES) {
+        sendProgress({
+          type: "coordinadores",
+          step: "chat_retry",
+          name: item.name,
+          club: item.club,
+          rowNumber: item.rowNumber,
+          message: `Reintentando abrir chat de ${item.name} en 15 segundos`,
+        });
+        await controlledSleep(control, CHAT_RETRY_DELAY_MS, sendProgress);
+      }
+    }
+  }
+
+  throw lastError || new Error("No se pudo abrir el chat");
 }
 
 async function sendMessage(page, message) {
@@ -439,13 +637,7 @@ async function openChatAndSend(page, item, secondMessage, control, sendProgress)
     firstVariant: firstPayload.variant,
   });
 
-  await controlCheckpoint(control, sendProgress);
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
-  await controlledSleep(control, CHAT_LOAD_DELAY_MS, sendProgress);
-
-  if (await isInvalidWhatsAppNumber(page)) {
-    throw new Error(INVALID_STATUS);
-  }
+  await openChat(page, item, url, control, sendProgress);
 
   await controlCheckpoint(control, sendProgress);
   await sendMessage(page, firstPayload.text);
@@ -574,13 +766,9 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
     });
 
     const page = await browser.newPage();
-    await page.goto("https://web.whatsapp.com/", {
-      waitUntil: "domcontentloaded",
-      timeout: 60000,
-    });
-    await waitForWhatsApp(page);
-
-    console.log("[COORDINADORES] WhatsApp listo");
+    page.setDefaultTimeout(CHAT_READY_TIMEOUT_MS);
+    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
+    console.log("[COORDINADORES] navegador listo; abro directo cada chat por telefono");
 
     for (let i = 0; i < rows.length; i++) {
       await controlCheckpoint(control, sendProgress);
