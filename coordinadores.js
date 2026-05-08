@@ -30,7 +30,7 @@ const MAX_CONTACTS_PER_RUN = 30;
 const BETWEEN_MESSAGES_DELAY_MS = 60 * 1000;
 const BETWEEN_CHATS_DELAY_MS = 2 * 60 * 1000;
 const NAVIGATION_TIMEOUT_MS = 120 * 1000;
-const CHAT_READY_TIMEOUT_MS = 180 * 1000;
+const CHAT_READY_TIMEOUT_MS = 25 * 60 * 1000;
 const CHAT_OPEN_RETRIES = 2;
 const CHAT_RETRY_DELAY_MS = 15 * 1000;
 
@@ -470,6 +470,25 @@ async function isQrVisible(page) {
   });
 }
 
+async function getWhatsAppLoadingLabel(page) {
+  return await page.evaluate(() => {
+    const text = document.body?.innerText || "";
+    const patterns = [
+      /Cargando tus chats\s*\[\s*\d+\s*%\s*\]/i,
+      /Loading your chats\s*\[\s*\d+\s*%\s*\]/i,
+      /No cierres esta ventana[^\n.]*/i,
+      /Don't close this window[^\n.]*/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) return match[0].trim();
+    }
+
+    return "";
+  }).catch(() => "");
+}
+
 async function hasMessageComposer(page) {
   return await page.evaluate(() => {
     const selectors = [
@@ -534,20 +553,23 @@ async function waitForChatReady(page, item, control, sendProgress) {
     const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
     if (elapsedSeconds - lastProgressAt >= 10) {
       lastProgressAt = elapsedSeconds;
+      const loadingLabel = await getWhatsAppLoadingLabel(page);
       sendProgress({
         type: "coordinadores",
         step: "chat_loading",
         name: item.name,
         club: item.club,
         rowNumber: item.rowNumber,
-        message: `Cargando WhatsApp/chat de ${item.name}... ${elapsedSeconds}s`,
+        message: loadingLabel
+          ? `${loadingLabel}. Esperando WhatsApp... ${elapsedSeconds}s`
+          : `Cargando WhatsApp/chat de ${item.name}... ${elapsedSeconds}s`,
       });
     }
 
     await controlledSleep(control, 1000, sendProgress);
   }
 
-  throw new Error(`Timeout cargando WhatsApp o el chat despues de ${CHAT_READY_TIMEOUT_MS / 1000}s`);
+  throw new Error(`Timeout cargando WhatsApp o el chat despues de ${Math.round(CHAT_READY_TIMEOUT_MS / 60000)} minutos`);
 }
 
 async function openChat(page, item, url, control, sendProgress) {
