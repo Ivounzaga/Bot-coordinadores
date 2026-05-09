@@ -188,7 +188,7 @@ function getSuggestedDate(date = new Date()) {
 
 function buildSecondMessage(date = new Date()) {
   const suggested = getSuggestedDate(date);
-  return `Te queda comodo el dia ${suggested.label} entre la franja horaria 8 a 17?`;
+  return `La idea es que sea solamente con dos categorias +15 años. Te queda comodo el dia ${suggested.label}? La capacitacion dura 1 hora, confirmame que hora entre las 8 y 17 te queda bien.`;
 }
 
 function buildFirstMessageVariantA(name) {
