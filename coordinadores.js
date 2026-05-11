@@ -383,6 +383,66 @@ function hasContactData(row) {
   return Boolean(club || firstName || lastName || email || phone || link);
 }
 
+function buildCoordinatorItemBase(row, rowNumber) {
+  const firstName = normalizeWhitespace(row[4]);
+  const lastName = normalizeWhitespace(row[5]);
+  const club = normalizeWhitespace(row[1]);
+  const rawPhone = cleanText(row[10]);
+  const rawLink = cleanText(row[11]);
+
+  return {
+    rowNumber,
+    name: firstName || lastName || `Fila ${rowNumber}`,
+    club,
+    rawPhone,
+    rawLink,
+  };
+}
+
+function getCanonicalRowByPhone(values, statusIndex) {
+  const entriesByPhone = new Map();
+  const handledStatusesToIgnore = new Set([
+    normalizeText(DUPLICATE_STATUS),
+    normalizeText(INVALID_STATUS),
+  ]);
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] || [];
+    const rowNumber = i + 1;
+
+    if (!hasContactData(row)) continue;
+
+    const finalPhone = resolvePhone(cleanText(row[10]), cleanText(row[11]));
+    if (!finalPhone) continue;
+
+    if (!entriesByPhone.has(finalPhone)) {
+      entriesByPhone.set(finalPhone, []);
+    }
+
+    entriesByPhone.get(finalPhone).push({
+      rowNumber,
+      status: cleanText(row[statusIndex]),
+    });
+  }
+
+  const canonicalRowByPhone = new Map();
+
+  for (const [phone, entries] of entriesByPhone.entries()) {
+    const handledEntry = entries.find((entry) => {
+      const status = normalizeText(entry.status);
+      return entry.status && !handledStatusesToIgnore.has(status);
+    });
+    const firstBlankEntry = entries.find((entry) => !entry.status);
+    const canonical = handledEntry || firstBlankEntry || entries[0];
+
+    if (canonical) {
+      canonicalRowByPhone.set(phone, canonical.rowNumber);
+    }
+  }
+
+  return canonicalRowByPhone;
+}
+
 function prepareRows(values, options = {}) {
   const columns = options.columns || resolveCoordinadoresColumns(values);
   const responsableFilter = normalizeText(options.responsable || "");
@@ -396,7 +456,7 @@ function prepareRows(values, options = {}) {
   const rows = [];
   const invalidos = [];
   const duplicados = [];
-  const firstRowByPhone = new Map();
+  const canonicalRowByPhone = getCanonicalRowByPhone(values, statusIndex);
 
   for (let i = 1; i < values.length; i++) {
     const row = values[i] || [];
@@ -407,44 +467,36 @@ function prepareRows(values, options = {}) {
     const estado = cleanText(row[statusIndex]);
     if (estado !== "") continue;
 
-    if (responsableFilter && normalizeText(row[responsableIndex]) !== responsableFilter) {
-      continue;
-    }
-
-    const firstName = normalizeWhitespace(row[4]);
-    const lastName = normalizeWhitespace(row[5]);
-    const club = normalizeWhitespace(row[1]);
-    const rawPhone = cleanText(row[10]);
-    const rawLink = cleanText(row[11]);
-    const finalPhone = resolvePhone(rawPhone, rawLink);
-
-    const itemBase = {
-      rowNumber,
-      name: firstName || lastName || `Fila ${rowNumber}`,
-      club,
-      rawPhone,
-      rawLink,
-    };
+    const matchesResponsable =
+      !responsableFilter || normalizeText(row[responsableIndex]) === responsableFilter;
+    const itemBase = buildCoordinatorItemBase(row, rowNumber);
+    const finalPhone = resolvePhone(itemBase.rawPhone, itemBase.rawLink);
 
     if (!finalPhone) {
-      invalidos.push({
-        ...itemBase,
-        reason: INVALID_STATUS,
-      });
+      if (matchesResponsable) {
+        invalidos.push({
+          ...itemBase,
+          reason: INVALID_STATUS,
+        });
+      }
       continue;
     }
 
-    if (firstRowByPhone.has(finalPhone)) {
+    const canonicalRowNumber = canonicalRowByPhone.get(finalPhone);
+
+    if (canonicalRowNumber && canonicalRowNumber !== rowNumber) {
       duplicados.push({
         ...itemBase,
         phone: finalPhone,
-        firstRowNumber: firstRowByPhone.get(finalPhone),
+        firstRowNumber: canonicalRowNumber,
         reason: DUPLICATE_STATUS,
       });
       continue;
     }
 
-    firstRowByPhone.set(finalPhone, rowNumber);
+    if (!matchesResponsable) {
+      continue;
+    }
 
     rows.push({
       ...itemBase,
@@ -456,7 +508,7 @@ function prepareRows(values, options = {}) {
     rows,
     invalidos,
     duplicados,
-    uniquePhones: firstRowByPhone.size,
+    uniquePhones: canonicalRowByPhone.size,
   };
 }
 
