@@ -1,7 +1,7 @@
 const { runAutomation } = require("./automation");
 const { runFollowup } = require("./followup");
 const { runReminder } = require("./reminder");
-const { runCoordinadores } = require("./coordinadores");
+const { runCoordinadores, runCoordinadoresReminders } = require("./coordinadores");
 
 async function runScript(sendProgress, options = {}) {
   return await runAutomation(sendProgress, {
@@ -27,9 +27,16 @@ async function runCoordinadoresScript(sendProgress, options = {}) {
   });
 }
 
+async function runCoordinadoresRemindersScript(sendProgress, options = {}) {
+  return await runCoordinadoresReminders(sendProgress, {
+    ...options,
+  });
+}
+
 module.exports = {
   runScript,
   runFollowupScript,
   runReminderScript,
   runCoordinadoresScript,
+  runCoordinadoresRemindersScript,
 };

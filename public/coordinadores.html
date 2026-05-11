@@ -128,6 +128,50 @@
       gap: 10px;
     }
 
+    .control-grid {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.2fr);
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field span,
+    .scheduler-label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    input {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+      padding: 10px 12px;
+    }
+
+    .scheduler-box {
+      display: grid;
+      gap: 8px;
+      align-content: start;
+    }
+
+    .scheduler-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
     button {
       border: 0;
       border-radius: var(--radius);
@@ -306,6 +350,10 @@
         align-items: flex-start;
         flex-direction: column;
       }
+
+      .control-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -336,7 +384,7 @@
         <div id="metric-invalidos" class="metric-value">0</div>
       </div>
       <div class="panel metric purple span-3">
-        <div class="metric-label">Duplicados</div>
+        <div id="metric-extra-label" class="metric-label">Duplicados</div>
         <div id="metric-duplicados" class="metric-value">0</div>
       </div>
 
@@ -344,6 +392,23 @@
         <div class="panel-title">
           <h2>Corrida</h2>
           <span id="progress-meta">Esperando inicio</span>
+        </div>
+
+        <div class="control-grid">
+          <label class="field">
+            <span>Responsable</span>
+            <input id="responsable-input" list="responsables-list" placeholder="Todos" autocomplete="off" />
+            <datalist id="responsables-list"></datalist>
+          </label>
+          <div class="scheduler-box">
+            <div class="scheduler-label">Recordatorios</div>
+            <div class="scheduler-row">
+              <span id="scheduler-status" class="status-pill">Automatico: apagado</span>
+              <button id="run-reminder-button" class="btn-secondary" onclick="runCoordinadoresReminders()">Correr recordatorios</button>
+              <button id="scheduler-start-button" class="btn-green" onclick="startReminderScheduler()">Activar cada hora</button>
+              <button id="scheduler-stop-button" class="btn-red" onclick="stopReminderScheduler()" style="display:none;">Apagar automatico</button>
+            </div>
+          </div>
         </div>
 
         <div class="message-preview">
@@ -392,6 +457,7 @@
           <div class="pill">Contactados: <span id="progress-contactados">0</span></div>
           <div class="pill">Invalidos: <span id="progress-invalidos">0</span></div>
           <div class="pill">Duplicados: <span id="progress-duplicados">0</span></div>
+          <div class="pill">Sin hora: <span id="progress-sinhora">0</span></div>
           <div class="pill">Errores: <span id="progress-errores">0</span></div>
         </div>
       </div>
@@ -407,8 +473,16 @@
   </main>
 
   <script>
-    const flowType = "coordinadores";
+    const CONTACT_FLOW = "coordinadores";
+    const REMINDER_FLOW = "coordinadoresReminder";
+    const REMINDER_3H_MESSAGE = "Buenas como estas? Recorda que hoy tenemos la capacitacion, podemos enviar un recordatorio para que esten presentes los jugadores y se registren en la APP? Nos vemos.";
+    const REMINDER_1H_MESSAGE = "Te envio un recordatorio ya que faltan menos de 1 hora para que arranque la reu.";
+    const RESPONSABLE_STORAGE_KEY = "coordinadores_responsable";
+
+    let activeFlowType = CONTACT_FLOW;
     let flowState = { status: "idle", startedAt: null };
+    let flowStates = {};
+    let schedulerState = { enabled: false };
 
     function getSuggestedSecondMessage(date = new Date()) {
       const dayTargets = { 1: 3, 2: 4, 3: 5, 4: 1, 5: 2 };
@@ -439,6 +513,15 @@
       });
     }
 
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
     function setStatus(message) {
       document.getElementById("status-line").textContent = message || "";
     }
@@ -447,8 +530,49 @@
       document.getElementById(id).textContent = value ?? 0;
     }
 
+    function getResponsable() {
+      return document.getElementById("responsable-input").value.trim();
+    }
+
+    function getFlowLabel(type = activeFlowType) {
+      return type === REMINDER_FLOW ? "recordatorios" : "coordinadores";
+    }
+
+    function setActiveFlow(type) {
+      activeFlowType = type;
+      setPreviewForFlow(type);
+
+      if (flowStates[type]) {
+        flowState = {
+          status: flowStates[type].status || "idle",
+          startedAt: flowStates[type].startedAt || null,
+        };
+      }
+
+      updateFlowButtons();
+      loadHistory();
+    }
+
+    function setPreviewForFlow(type = activeFlowType) {
+      const first = document.getElementById("first-message-preview");
+      const second = document.getElementById("second-message-preview");
+
+      if (type === REMINDER_FLOW) {
+        first.textContent = REMINDER_3H_MESSAGE;
+        second.textContent = REMINDER_1H_MESSAGE;
+        return;
+      }
+
+      first.textContent = "Buenas {nombre}. Como estas? Todo bien? Te escribo para coordinar la capacitacion con jugadores y STAFF del club.";
+      second.textContent = getSuggestedSecondMessage();
+    }
+
+    function getSinHoraCount(item) {
+      return item.sinHora?.length || 0;
+    }
+
     function getSentCount(item) {
-      return item.contactados?.length || item.coordinadores?.length || 0;
+      return item.contactados?.length || item.coordinadores?.length || item.reminders?.length || 0;
     }
 
     function getInvalidCount(item) {
@@ -467,47 +591,56 @@
       const status = flowState.status || "idle";
       const statusBox = document.getElementById("flow-status");
       const run = document.getElementById("run-button");
+      const runReminder = document.getElementById("run-reminder-button");
       const pause = document.getElementById("pause-button");
       const resume = document.getElementById("resume-button");
       const stop = document.getElementById("stop-button");
 
       statusBox.className = `status-pill ${status}`;
       statusBox.textContent =
-        status === "running" ? "Estado: ejecutando" :
-        status === "paused" ? "Estado: pausado" :
-        status === "stopping" ? "Estado: deteniendo" :
+        status === "running" ? `Estado: ejecutando ${getFlowLabel()}` :
+        status === "paused" ? `Estado: pausado ${getFlowLabel()}` :
+        status === "stopping" ? `Estado: deteniendo ${getFlowLabel()}` :
         "Estado: inactivo";
 
       if (status === "running") {
         run.style.display = "none";
+        runReminder.style.display = "none";
         pause.style.display = "inline-flex";
         resume.style.display = "none";
         stop.style.display = "inline-flex";
       } else if (status === "paused") {
         run.style.display = "none";
+        runReminder.style.display = "none";
         pause.style.display = "none";
         resume.style.display = "inline-flex";
         stop.style.display = "inline-flex";
       } else if (status === "stopping") {
         run.style.display = "none";
+        runReminder.style.display = "none";
         pause.style.display = "none";
         resume.style.display = "none";
         stop.style.display = "inline-flex";
         stop.disabled = true;
       } else {
         run.style.display = "inline-flex";
+        runReminder.style.display = "inline-flex";
         pause.style.display = "none";
         resume.style.display = "none";
         stop.style.display = "none";
         stop.disabled = false;
       }
+
+      document.getElementById("metric-extra-label").textContent =
+        activeFlowType === REMINDER_FLOW ? "Sin hora" : "Duplicados";
     }
 
     function applyControlSnapshot(snapshot) {
-      if (!snapshot?.[flowType]) return;
+      if (!snapshot?.[activeFlowType]) return;
+      flowStates = snapshot;
       flowState = {
-        status: snapshot[flowType].status || "idle",
-        startedAt: snapshot[flowType].startedAt || null,
+        status: snapshot[activeFlowType].status || "idle",
+        startedAt: snapshot[activeFlowType].startedAt || null,
       };
       updateFlowButtons();
     }
@@ -525,13 +658,14 @@
 
     async function controlFlow(action) {
       try {
-        const res = await fetch(`/api/control/${flowType}/${action}`, {
+        const res = await fetch(`/api/control/${activeFlowType}/${action}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" }
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "No se pudo cambiar el estado");
         flowState = { status: data.state.status, startedAt: data.state.startedAt || null };
+        flowStates[activeFlowType] = data.state;
         updateFlowButtons();
       } catch (error) {
         setStatus(error.message);
@@ -544,7 +678,15 @@
         return;
       }
 
-      if (data.type && data.type !== flowType) return;
+      if (data.type && data.controlStatus) {
+        flowStates[data.type] = {
+          ...(flowStates[data.type] || {}),
+          status: data.controlStatus,
+          startedAt: data.startedAt || flowStates[data.type]?.startedAt || null,
+        };
+      }
+
+      if (data.type && data.type !== activeFlowType) return;
 
       if (data.controlStatus) {
         flowState = { ...flowState, status: data.controlStatus };
@@ -556,21 +698,29 @@
       const contactados = data.contactados ?? Number(document.getElementById("progress-contactados").textContent || 0);
       const invalidos = data.invalidos ?? Number(document.getElementById("progress-invalidos").textContent || 0);
       const duplicados = data.duplicados ?? Number(document.getElementById("progress-duplicados").textContent || 0);
+      const sinHora = data.sinHora ?? Number(document.getElementById("progress-sinhora").textContent || 0);
       const errores = data.errores ?? Number(document.getElementById("progress-errores").textContent || 0);
+      const extraMetric = activeFlowType === REMINDER_FLOW ? sinHora : duplicados;
 
       setMetric("metric-found", total);
       setMetric("metric-contactados", contactados);
       setMetric("metric-invalidos", invalidos);
-      setMetric("metric-duplicados", duplicados);
+      setMetric("metric-duplicados", extraMetric);
 
       document.getElementById("progress-found").textContent = total;
       document.getElementById("progress-contactados").textContent = contactados;
       document.getElementById("progress-invalidos").textContent = invalidos;
       document.getElementById("progress-duplicados").textContent = duplicados;
+      document.getElementById("progress-sinhora").textContent = sinHora;
       document.getElementById("progress-errores").textContent = errores;
 
       if (data.secondMessage) {
         document.getElementById("second-message-preview").textContent = data.secondMessage;
+      }
+
+      if (data.reminderMessage1 || data.reminderMessage2) {
+        document.getElementById("first-message-preview").textContent = data.reminderMessage1 || REMINDER_3H_MESSAGE;
+        document.getElementById("second-message-preview").textContent = data.reminderMessage2 || REMINDER_1H_MESSAGE;
       }
 
       const text = document.getElementById("progress-text");
@@ -587,7 +737,7 @@
 
       if (data.step === "rows_ready" || data.step === "preclean_done") {
         text.textContent = data.message || "Contactos listos";
-        meta.textContent = `${total} encontrados`;
+        meta.textContent = `${total} ${activeFlowType === REMINDER_FLOW ? "recordatorios" : "encontrados"}`;
         count.textContent = `0 / ${total}`;
         bar.style.width = "8%";
       }
@@ -617,7 +767,9 @@
 
       if (data.step === "item_success") {
         const percent = total ? (current / total) * 100 : 100;
-        text.textContent = `Enviado correctamente a ${data.name || "contacto"}`;
+        text.textContent = activeFlowType === REMINDER_FLOW
+          ? `Recordatorio enviado a ${data.name || "contacto"}`
+          : `Enviado correctamente a ${data.name || "contacto"}`;
         count.textContent = `${current} / ${total}`;
         bar.style.width = `${percent}%`;
       }
@@ -656,8 +808,10 @@
         meta.textContent = "Completado";
         bar.style.width = "100%";
         flowState = { status: "idle", startedAt: null };
+        flowStates[activeFlowType] = { ...(flowStates[activeFlowType] || {}), status: "idle", startedAt: null };
         updateFlowButtons();
         loadHistory();
+        loadSchedulerState();
       }
 
       if (data.step === "failed") {
@@ -665,16 +819,20 @@
         meta.textContent = "Fallo";
         bar.style.width = "100%";
         flowState = { status: "idle", startedAt: null };
+        flowStates[activeFlowType] = { ...(flowStates[activeFlowType] || {}), status: "idle", startedAt: null };
         updateFlowButtons();
+        loadSchedulerState();
       }
     }
 
     async function runCoordinadores() {
       try {
+        setActiveFlow(CONTACT_FLOW);
+        const responsable = getResponsable();
         flowState = { status: "running", startedAt: new Date().toISOString() };
         updateFlowButtons();
         updateProgress({
-          type: flowType,
+          type: activeFlowType,
           step: "starting",
           total: 0,
           contactados: 0,
@@ -689,7 +847,7 @@
         const res = await fetch("/api/run-coordinadores", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({})
+          body: JSON.stringify({ responsable })
         });
         const result = await res.json();
         if (!res.ok) throw new Error(result.error || "No se pudo ejecutar coordinadores");
@@ -712,12 +870,133 @@
       }
     }
 
+    async function runCoordinadoresReminders() {
+      try {
+        setActiveFlow(REMINDER_FLOW);
+        const responsable = getResponsable();
+        flowState = { status: "running", startedAt: new Date().toISOString() };
+        updateFlowButtons();
+        updateProgress({
+          type: activeFlowType,
+          step: "starting",
+          total: 0,
+          contactados: 0,
+          invalidos: 0,
+          duplicados: 0,
+          sinHora: 0,
+          errores: 0,
+          reminderMessage1: REMINDER_3H_MESSAGE,
+          reminderMessage2: REMINDER_1H_MESSAGE,
+          message: "Iniciando recordatorios..."
+        });
+        setStatus("Ejecutando recordatorios...");
+
+        const res = await fetch("/api/run-coordinadores-reminders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ responsable })
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || "No se pudo ejecutar recordatorios");
+
+        flowState = {
+          status: result.state?.status || "running",
+          startedAt: result.state?.startedAt || flowState.startedAt,
+        };
+        updateFlowButtons();
+        setStatus("Recordatorios iniciados. Podes seguir el progreso en esta pantalla.");
+      } catch (error) {
+        setStatus(error.message || "Hubo un error.");
+      }
+    }
+
+    async function loadResponsables() {
+      try {
+        const saved = localStorage.getItem(RESPONSABLE_STORAGE_KEY) || "";
+        document.getElementById("responsable-input").value = saved;
+
+        const res = await fetch("/api/coordinadores-responsables");
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = document.getElementById("responsables-list");
+        list.innerHTML = (data.responsables || [])
+          .map((name) => `<option value="${escapeHtml(name)}"></option>`)
+          .join("");
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    function updateSchedulerUi() {
+      const status = document.getElementById("scheduler-status");
+      const start = document.getElementById("scheduler-start-button");
+      const stop = document.getElementById("scheduler-stop-button");
+
+      if (schedulerState.enabled) {
+        status.className = "status-pill running";
+        status.textContent = "Automatico: encendido";
+        start.style.display = "none";
+        stop.style.display = "inline-flex";
+      } else {
+        status.className = "status-pill";
+        status.textContent = "Automatico: apagado";
+        start.style.display = "inline-flex";
+        stop.style.display = "none";
+      }
+    }
+
+    async function loadSchedulerState() {
+      try {
+        const res = await fetch("/api/coordinadores-reminder-scheduler");
+        if (!res.ok) return;
+        schedulerState = await res.json();
+        updateSchedulerUi();
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    async function startReminderScheduler() {
+      try {
+        setActiveFlow(REMINDER_FLOW);
+        const responsable = getResponsable();
+        const res = await fetch("/api/coordinadores-reminder-scheduler/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ responsable, runNow: true })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "No se pudo activar el automatico");
+        schedulerState = data.scheduler;
+        updateSchedulerUi();
+        setStatus("Recordatorios automaticos activados.");
+      } catch (error) {
+        setStatus(error.message || "Hubo un error.");
+      }
+    }
+
+    async function stopReminderScheduler() {
+      try {
+        const res = await fetch("/api/coordinadores-reminder-scheduler/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "No se pudo apagar el automatico");
+        schedulerState = data.scheduler;
+        updateSchedulerUi();
+        setStatus("Recordatorios automaticos apagados.");
+      } catch (error) {
+        setStatus(error.message || "Hubo un error.");
+      }
+    }
+
     async function loadHistory() {
       try {
         const res = await fetch("/api/history");
         const data = await res.json();
         const runs = Array.isArray(data)
-          ? data.filter((item) => item.type === flowType)
+          ? data.filter((item) => item.type === activeFlowType)
           : [];
         const list = document.getElementById("history-list");
         document.getElementById("history-count").textContent =
@@ -732,7 +1011,7 @@
           <div class="run-item">
             <div class="run-title">${formatDate(item.date)}</div>
             <div class="run-meta">
-              Contactados: ${getSentCount(item)} · Invalidos: ${getInvalidCount(item)} · Duplicados: ${getDuplicateCount(item)} · Errores: ${getErrorCount(item)}
+              ${activeFlowType === REMINDER_FLOW ? "Enviados" : "Contactados"}: ${getSentCount(item)} · Invalidos: ${getInvalidCount(item)} · Duplicados: ${getDuplicateCount(item)} · Sin hora: ${getSinHoraCount(item)} · Errores: ${getErrorCount(item)}
               ${item.stoppedByLimit ? " · limite alcanzado" : ""}
             </div>
             <div class="run-meta">${item.secondMessage || item.message || ""}</div>
@@ -743,7 +1022,11 @@
       }
     }
 
-    document.getElementById("second-message-preview").textContent = getSuggestedSecondMessage();
+    document.getElementById("responsable-input").addEventListener("input", () => {
+      localStorage.setItem(RESPONSABLE_STORAGE_KEY, getResponsable());
+    });
+
+    setPreviewForFlow(CONTACT_FLOW);
 
     const progressSource = new EventSource("/api/progress");
     progressSource.onmessage = function(event) {
@@ -754,6 +1037,8 @@
     };
 
     loadControlState();
+    loadResponsables();
+    loadSchedulerState();
     loadHistory();
     updateFlowButtons();
   </script>

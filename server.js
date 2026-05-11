@@ -49,6 +49,20 @@ const executionState = {
   followup: createFlowState("followup"),
   reminder: createFlowState("reminder"),
   coordinadores: createFlowState("coordinadores"),
+  coordinadoresReminder: createFlowState("coordinadoresReminder"),
+};
+
+const FLOW_TYPES = Object.keys(executionState);
+const COORDINADORES_REMINDER_INTERVAL_MS = 60 * 60 * 1000;
+
+const coordinadoresReminderScheduler = {
+  enabled: false,
+  responsable: "",
+  intervalId: null,
+  lastRunAt: null,
+  nextRunAt: null,
+  lastResult: null,
+  lastSkipReason: "",
 };
 
 function createFlowState(type) {
@@ -64,7 +78,25 @@ function getFlowLabel(type) {
   if (type === "followup") return "follow-up";
   if (type === "reminder") return "recordatorios";
   if (type === "coordinadores") return "coordinadores";
+  if (type === "coordinadoresReminder") return "recordatorios de coordinadores";
   return "primer mensaje";
+}
+
+function getAllFlowStates() {
+  return FLOW_TYPES.reduce((acc, type) => {
+    acc[type] = getPublicFlowState(type);
+    return acc;
+  }, {});
+}
+
+function hasActiveFlow() {
+  return FLOW_TYPES.some((type) => getFlowState(type).status !== "idle");
+}
+
+function getActiveFlowLabels() {
+  return FLOW_TYPES
+    .filter((type) => getFlowState(type).status !== "idle")
+    .map(getFlowLabel);
 }
 
 function getFlowState(type) {
@@ -108,6 +140,18 @@ function startFlow(type) {
       ok: false,
       reason: `Ya hay una ejecución en curso para ${getFlowLabel(type)}.`,
       status: flow.status,
+    };
+  }
+
+  const activeOtherType = FLOW_TYPES.find(
+    (otherType) => otherType !== type && getFlowState(otherType).status !== "idle"
+  );
+
+  if (activeOtherType) {
+    return {
+      ok: false,
+      reason: `Ya hay una ejecución en curso para ${getFlowLabel(activeOtherType)}.`,
+      status: getFlowState(activeOtherType).status,
     };
   }
 
@@ -282,9 +326,9 @@ function createFlowControl(type) {
 
 function wrapProgress(type, progress) {
   return {
+    ...progress,
     type,
     controlStatus: getFlowState(type).status,
-    ...progress,
   };
 }
 
@@ -299,12 +343,7 @@ app.get("/api/progress", (req, res) => {
   res.write(
     `data: ${JSON.stringify({
       step: "control_snapshot",
-      flows: {
-        initial: getPublicFlowState("initial"),
-        followup: getPublicFlowState("followup"),
-        reminder: getPublicFlowState("reminder"),
-        coordinadores: getPublicFlowState("coordinadores"),
-      },
+      flows: getAllFlowStates(),
     })}\n\n`
   );
 
@@ -320,22 +359,12 @@ app.get("/api/history", (req, res) => {
 });
 
 app.get("/api/control-state", (req, res) => {
-  res.json({
-    initial: getPublicFlowState("initial"),
-    followup: getPublicFlowState("followup"),
-    reminder: getPublicFlowState("reminder"),
-    coordinadores: getPublicFlowState("coordinadores"),
-  });
+  res.json(getAllFlowStates());
 });
 
 app.get("/api/progress-state", (req, res) => {
   res.json({
-    flows: {
-      initial: getPublicFlowState("initial"),
-      followup: getPublicFlowState("followup"),
-      reminder: getPublicFlowState("reminder"),
-      coordinadores: getPublicFlowState("coordinadores"),
-    },
+    flows: getAllFlowStates(),
     lastProgress: lastProgressByType,
   });
 });
@@ -345,7 +374,7 @@ app.post("/api/control/:type/:action", (req, res) => {
     const type = String(req.params.type || "").trim();
     const action = String(req.params.action || "").trim();
 
-    if (!["initial", "followup", "reminder", "coordinadores"].includes(type)) {
+    if (!FLOW_TYPES.includes(type)) {
       return res.status(400).json({ error: "Tipo de flujo inválido" });
     }
 
@@ -626,10 +655,12 @@ app.post("/api/run-coordinadores", async (req, res) => {
   try {
     console.log("[COORDINADORES] endpoint llamado");
 
+    const responsable = String(req.body?.responsable || "").trim();
     const control = createFlowControl(type);
 
     sendProgress(wrapProgress(type, {
       step: "starting",
+      responsable,
       message: "Iniciando coordinadores..."
     }));
 
@@ -639,7 +670,7 @@ app.post("/api/run-coordinadores", async (req, res) => {
 
         runCoordinadoresScript((progress) => {
           sendProgress(wrapProgress(type, progress));
-        }, { control }).then(resolve, reject);
+        }, { control, responsable }).then(resolve, reject);
       });
     });
 
@@ -650,6 +681,7 @@ app.post("/api/run-coordinadores", async (req, res) => {
         const historyEntry = {
           ...result,
           type: "coordinadores",
+          responsable,
           message: result.secondMessage || result.message || "",
           coordinadores: result.contactados || [],
         };
@@ -701,6 +733,242 @@ app.post("/api/run-coordinadores", async (req, res) => {
 
     res.status(error.code === "MANUAL_STOP" ? 409 : 500).json({ error: error.message });
   }
+});
+
+function getCoordinadoresReminderSchedulerState() {
+  return {
+    enabled: coordinadoresReminderScheduler.enabled,
+    responsable: coordinadoresReminderScheduler.responsable,
+    lastRunAt: coordinadoresReminderScheduler.lastRunAt,
+    nextRunAt: coordinadoresReminderScheduler.nextRunAt,
+    lastResult: coordinadoresReminderScheduler.lastResult,
+    lastSkipReason: coordinadoresReminderScheduler.lastSkipReason,
+    intervalMinutes: Math.round(COORDINADORES_REMINDER_INTERVAL_MS / 60000),
+    flow: getPublicFlowState("coordinadoresReminder"),
+  };
+}
+
+function setNextCoordinadoresReminderRun() {
+  coordinadoresReminderScheduler.nextRunAt = coordinadoresReminderScheduler.enabled
+    ? new Date(Date.now() + COORDINADORES_REMINDER_INTERVAL_MS).toISOString()
+    : null;
+}
+
+function startCoordinadoresReminderRun({ responsable = "", source = "manual" } = {}) {
+  const type = "coordinadoresReminder";
+  const startResult = startFlow(type);
+
+  if (!startResult.ok) {
+    return {
+      started: false,
+      error: startResult.reason,
+      state: getPublicFlowState(type),
+    };
+  }
+
+  const control = createFlowControl(type);
+
+  sendProgress(wrapProgress(type, {
+    step: "starting",
+    responsable,
+    source,
+    message: source === "scheduler"
+      ? "Iniciando recordatorios automaticos de coordinadores..."
+      : "Iniciando recordatorios de coordinadores...",
+  }));
+
+  const runPromise = new Promise((resolve, reject) => {
+    setImmediate(() => {
+      const { runCoordinadoresRemindersScript } = require("./runner");
+
+      runCoordinadoresRemindersScript((progress) => {
+        sendProgress(wrapProgress(type, progress));
+      }, { control, responsable }).then(resolve, reject);
+    });
+  });
+
+  getFlowState(type).currentRunPromise = runPromise;
+
+  runPromise
+    .then((result) => {
+      const historyEntry = {
+        ...result,
+        type,
+        responsable,
+        source,
+        message: result.message || "",
+        reminders: result.reminders || result.contactados || [],
+      };
+
+      appendHistory(historyEntry);
+
+      coordinadoresReminderScheduler.lastResult = {
+        date: historyEntry.date,
+        source,
+        total: historyEntry.total || 0,
+        reminders: historyEntry.reminders?.length || 0,
+        invalidos: historyEntry.invalidos?.length || 0,
+        sinHora: historyEntry.sinHora?.length || 0,
+        errores: historyEntry.errores?.length || 0,
+      };
+
+      sendProgress(wrapProgress(type, {
+        step: "finished",
+        responsable,
+        source,
+        summary: {
+          total: historyEntry.total || 0,
+          contactados: historyEntry.reminders?.length || historyEntry.contactados?.length || 0,
+          invalidos: historyEntry.invalidos?.length || 0,
+          sinHora: historyEntry.sinHora?.length || 0,
+          errores: historyEntry.errores?.length || 0,
+        },
+      }));
+
+      finishFlow(type);
+    })
+    .catch((error) => {
+      console.error("[COORDINADORES][REMINDERS] error:", error);
+
+      coordinadoresReminderScheduler.lastResult = {
+        date: new Date().toISOString(),
+        source,
+        error: error.message,
+      };
+
+      sendProgress(wrapProgress(type, {
+        step: error.code === "MANUAL_STOP" ? "stopped" : "failed",
+        responsable,
+        source,
+        message: error.message,
+      }));
+
+      finishFlow(type, {
+        lastError: error.message,
+      });
+    });
+
+  return {
+    started: true,
+    state: getPublicFlowState(type),
+  };
+}
+
+function runScheduledCoordinadoresReminder() {
+  if (!coordinadoresReminderScheduler.enabled) return;
+
+  coordinadoresReminderScheduler.lastRunAt = new Date().toISOString();
+  setNextCoordinadoresReminderRun();
+
+  if (hasActiveFlow()) {
+    const active = getActiveFlowLabels().join(", ");
+    coordinadoresReminderScheduler.lastSkipReason = `Se salteo porque hay otro flujo activo: ${active}`;
+    console.log("[COORDINADORES][REMINDERS][SCHEDULER]", coordinadoresReminderScheduler.lastSkipReason);
+    return;
+  }
+
+  coordinadoresReminderScheduler.lastSkipReason = "";
+  const result = startCoordinadoresReminderRun({
+    responsable: coordinadoresReminderScheduler.responsable,
+    source: "scheduler",
+  });
+
+  if (!result.started) {
+    coordinadoresReminderScheduler.lastSkipReason = result.error;
+  }
+}
+
+function startCoordinadoresReminderScheduler(responsable = "") {
+  if (coordinadoresReminderScheduler.intervalId) {
+    clearInterval(coordinadoresReminderScheduler.intervalId);
+  }
+
+  coordinadoresReminderScheduler.enabled = true;
+  coordinadoresReminderScheduler.responsable = String(responsable || "").trim();
+  coordinadoresReminderScheduler.lastSkipReason = "";
+  setNextCoordinadoresReminderRun();
+  coordinadoresReminderScheduler.intervalId = setInterval(
+    runScheduledCoordinadoresReminder,
+    COORDINADORES_REMINDER_INTERVAL_MS
+  );
+}
+
+function stopCoordinadoresReminderScheduler() {
+  if (coordinadoresReminderScheduler.intervalId) {
+    clearInterval(coordinadoresReminderScheduler.intervalId);
+  }
+
+  coordinadoresReminderScheduler.enabled = false;
+  coordinadoresReminderScheduler.intervalId = null;
+  setNextCoordinadoresReminderRun();
+}
+
+app.get("/api/coordinadores-responsables", async (req, res) => {
+  try {
+    const { getCoordinadoresResponsables } = require("./coordinadores");
+    const result = await Promise.race([
+      getCoordinadoresResponsables().then((responsables) => ({ responsables })),
+      new Promise((resolve) => {
+        setTimeout(() => {
+          resolve({
+            responsables: [],
+            warning: "No se pudieron cargar responsables a tiempo. Podes escribirlo manualmente.",
+          });
+        }, 8000);
+      }),
+    ]);
+
+    res.json(result);
+  } catch (error) {
+    console.error("[COORDINADORES] responsables error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/run-coordinadores-reminders", async (req, res) => {
+  const responsable = String(req.body?.responsable || "").trim();
+  const result = startCoordinadoresReminderRun({ responsable, source: "manual" });
+
+  if (!result.started) {
+    return res.status(409).json({
+      error: result.error,
+      state: result.state,
+    });
+  }
+
+  return res.status(202).json({
+    started: true,
+    state: result.state,
+    message: "Corrida de recordatorios de coordinadores iniciada",
+  });
+});
+
+app.get("/api/coordinadores-reminder-scheduler", (req, res) => {
+  res.json(getCoordinadoresReminderSchedulerState());
+});
+
+app.post("/api/coordinadores-reminder-scheduler/start", (req, res) => {
+  const responsable = String(req.body?.responsable || "").trim();
+  const runNow = Boolean(req.body?.runNow);
+
+  startCoordinadoresReminderScheduler(responsable);
+
+  if (runNow) {
+    runScheduledCoordinadoresReminder();
+  }
+
+  res.json({
+    ok: true,
+    scheduler: getCoordinadoresReminderSchedulerState(),
+  });
+});
+
+app.post("/api/coordinadores-reminder-scheduler/stop", (req, res) => {
+  stopCoordinadoresReminderScheduler();
+  res.json({
+    ok: true,
+    scheduler: getCoordinadoresReminderSchedulerState(),
+  });
 });
 
 app.listen(PORT, () => {

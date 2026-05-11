@@ -26,6 +26,15 @@ const CONTACTED_STATUS = "contactado";
 const DUPLICATE_STATUS = "Telefono duplicado";
 const INVALID_STATUS = "Telefono invalido";
 
+const REMINDER_3H_HEADER = "Recordatorio 3h enviado";
+const REMINDER_1H_HEADER = "Recordatorio 1h enviado";
+const REMINDER_3H_TYPE = "reminder_3h";
+const REMINDER_1H_TYPE = "reminder_1h";
+const REMINDER_3H_MESSAGE =
+  "Buenas como estas? Recorda que hoy tenemos la capacitacion, podemos enviar un recordatorio para que esten presentes los jugadores y se registren en la APP? Nos vemos.";
+const REMINDER_1H_MESSAGE =
+  "Te envio un recordatorio ya que faltan menos de 1 hora para que arranque la reu.";
+
 const MAX_CONTACTS_PER_RUN = 30;
 const BETWEEN_MESSAGES_DELAY_MS = 60 * 1000;
 const BETWEEN_CHATS_DELAY_MS = 2 * 60 * 1000;
@@ -75,6 +84,49 @@ function cleanText(value) {
 
 function normalizeWhitespace(value) {
   return cleanText(value).replace(/\s+/g, " ");
+}
+
+function normalizeText(value) {
+  return normalizeWhitespace(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function normalizeHeader(value) {
+  return normalizeText(value)
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function indexToColumn(index) {
+  let n = index + 1;
+  let column = "";
+
+  while (n > 0) {
+    const remainder = (n - 1) % 26;
+    column = String.fromCharCode(65 + remainder) + column;
+    n = Math.floor((n - 1) / 26);
+  }
+
+  return column;
+}
+
+function findHeaderColumn(headers, aliases) {
+  const normalizedAliases = aliases.map(normalizeHeader);
+
+  for (let i = 0; i < headers.length; i++) {
+    const normalizedHeader = normalizeHeader(headers[i]);
+    if (normalizedAliases.includes(normalizedHeader)) {
+      return {
+        index: i,
+        letter: indexToColumn(i),
+        header: cleanText(headers[i]),
+      };
+    }
+  }
+
+  return null;
 }
 
 function digitsFromValue(value) {
@@ -143,6 +195,15 @@ function formatDateForSheet(date = new Date()) {
   const mm = String(date.getMonth() + 1).padStart(2, "0");
   const dd = String(date.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatDateTimeForSheet(date = new Date()) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
 }
 
 function formatDayMonth(date) {
@@ -222,6 +283,76 @@ function buildWhatsAppUrl(phone) {
   return `https://web.whatsapp.com/send/?phone=${phone}&type=phone_number&app_absent=0`;
 }
 
+function resolveCoordinadoresColumns(values) {
+  const headers = values[0] || [];
+
+  return {
+    headers,
+    lastContact: findHeaderColumn(headers, ["Ultimo contacto", "Último contacto"]),
+    status: findHeaderColumn(headers, ["Estado"]),
+    capacitacionDate: findHeaderColumn(headers, [
+      "Fecha de la capacitacion",
+      "Fecha de capacitacion",
+      "Fecha capacitacion",
+      "Fecha de la capacitación",
+      "Fecha de capacitación",
+    ]),
+    responsable: findHeaderColumn(headers, ["Responsable"]),
+    reminder3h: findHeaderColumn(headers, [REMINDER_3H_HEADER]),
+    reminder1h: findHeaderColumn(headers, [REMINDER_1H_HEADER]),
+  };
+}
+
+async function ensureReminderColumns(sheets, values) {
+  const headers = values[0] || [];
+  const updates = [];
+  let nextIndex = headers.length;
+  const columns = resolveCoordinadoresColumns(values);
+
+  if (!columns.capacitacionDate) {
+    throw new Error("No encontre la columna Fecha de la capacitacion en la hoja Coordinadores.");
+  }
+
+  if (!columns.responsable) {
+    throw new Error("No encontre la columna Responsable en la hoja Coordinadores.");
+  }
+
+  if (!columns.reminder3h) {
+    const letter = indexToColumn(nextIndex);
+    columns.reminder3h = {
+      index: nextIndex,
+      letter,
+      header: REMINDER_3H_HEADER,
+    };
+    headers[nextIndex] = REMINDER_3H_HEADER;
+    updates.push({
+      range: `${SHEET_NAME}!${letter}1`,
+      values: [[REMINDER_3H_HEADER]],
+    });
+    nextIndex += 1;
+  }
+
+  if (!columns.reminder1h) {
+    const letter = indexToColumn(nextIndex);
+    columns.reminder1h = {
+      index: nextIndex,
+      letter,
+      header: REMINDER_1H_HEADER,
+    };
+    headers[nextIndex] = REMINDER_1H_HEADER;
+    updates.push({
+      range: `${SHEET_NAME}!${letter}1`,
+      values: [[REMINDER_1H_HEADER]],
+    });
+  }
+
+  if (updates.length) {
+    await batchUpdateValues(sheets, updates);
+  }
+
+  return columns;
+}
+
 async function getSheetsClient() {
   const auth = new google.auth.GoogleAuth({
     keyFile: CREDENTIALS_PATH,
@@ -234,7 +365,7 @@ async function getSheetsClient() {
 async function fetchSheetRows(sheets) {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A:V`,
+    range: `${SHEET_NAME}!A:AZ`,
     valueRenderOption: "FORMATTED_VALUE",
   });
 
@@ -252,7 +383,16 @@ function hasContactData(row) {
   return Boolean(club || firstName || lastName || email || phone || link);
 }
 
-function prepareRows(values) {
+function prepareRows(values, options = {}) {
+  const columns = options.columns || resolveCoordinadoresColumns(values);
+  const responsableFilter = normalizeText(options.responsable || "");
+  const statusIndex = columns.status?.index ?? 13;
+  const responsableIndex = columns.responsable?.index;
+
+  if (responsableFilter && responsableIndex == null) {
+    throw new Error("No encontre la columna Responsable en la hoja Coordinadores.");
+  }
+
   const rows = [];
   const invalidos = [];
   const duplicados = [];
@@ -264,8 +404,12 @@ function prepareRows(values) {
 
     if (!hasContactData(row)) continue;
 
-    const estado = cleanText(row[13]);
+    const estado = cleanText(row[statusIndex]);
     if (estado !== "") continue;
+
+    if (responsableFilter && normalizeText(row[responsableIndex]) !== responsableFilter) {
+      continue;
+    }
 
     const firstName = normalizeWhitespace(row[4]);
     const lastName = normalizeWhitespace(row[5]);
@@ -316,6 +460,295 @@ function prepareRows(values) {
   };
 }
 
+function parseCapacitacionDate(value, now = new Date()) {
+  const raw = normalizeWhitespace(value)
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+hs?\.?/gi, ":00")
+    .replace(/\ba las\b/gi, " ");
+
+  if (!raw) {
+    return {
+      date: null,
+      hasTime: false,
+      reason: "Fecha de capacitacion vacia",
+    };
+  }
+
+  const isoMatch = raw.match(
+    /(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T]+(\d{1,2})(?::|\.)(\d{2}))?/i
+  );
+  const localMatch = raw.match(
+    /(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?(?:\D+(\d{1,2})(?::|\.)(\d{2}))?/i
+  );
+  const timeOnlyMatch = raw.match(/\b(\d{1,2})(?::|\.)(\d{2})\b/);
+
+  let year;
+  let month;
+  let day;
+  let hour = 0;
+  let minute = 0;
+  let hasTime = false;
+
+  if (isoMatch) {
+    year = Number(isoMatch[1]);
+    month = Number(isoMatch[2]) - 1;
+    day = Number(isoMatch[3]);
+    hasTime = isoMatch[4] != null && isoMatch[5] != null;
+    hour = hasTime ? Number(isoMatch[4]) : 0;
+    minute = hasTime ? Number(isoMatch[5]) : 0;
+  } else if (localMatch) {
+    day = Number(localMatch[1]);
+    month = Number(localMatch[2]) - 1;
+    year = localMatch[3] ? Number(localMatch[3]) : now.getFullYear();
+    if (year < 100) year += 2000;
+    hasTime = localMatch[4] != null && localMatch[5] != null;
+    hour = hasTime ? Number(localMatch[4]) : 0;
+    minute = hasTime ? Number(localMatch[5]) : 0;
+  } else {
+    return {
+      date: null,
+      hasTime: false,
+      reason: "No pude interpretar la fecha de capacitacion",
+    };
+  }
+
+  if (!hasTime && timeOnlyMatch) {
+    hasTime = true;
+    hour = Number(timeOnlyMatch[1]);
+    minute = Number(timeOnlyMatch[2]);
+  }
+
+  const date = new Date(year, month, day, hour, minute, 0, 0);
+
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== year ||
+    date.getMonth() !== month ||
+    date.getDate() !== day ||
+    hour > 23 ||
+    minute > 59
+  ) {
+    return {
+      date: null,
+      hasTime: false,
+      reason: "Fecha de capacitacion invalida",
+    };
+  }
+
+  return {
+    date,
+    hasTime,
+    reason: hasTime ? "" : "La fecha de capacitacion no tiene hora",
+  };
+}
+
+function isSameLocalDay(a, b) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function resolveReminderDecision(row, columns, meetingDate, hasTime, now = new Date()) {
+  if (!hasTime) {
+    return {
+      type: "",
+      reason: "La fecha de capacitacion no tiene hora",
+    };
+  }
+
+  if (!isSameLocalDay(meetingDate, now)) {
+    return {
+      type: "",
+      reason: "La capacitacion no es hoy",
+    };
+  }
+
+  const diffMinutes = Math.ceil((meetingDate.getTime() - now.getTime()) / 60000);
+
+  if (diffMinutes < 0) {
+    return {
+      type: "",
+      reason: "La capacitacion ya empezo o ya paso",
+      diffMinutes,
+    };
+  }
+
+  const sent3h = cleanText(row[columns.reminder3h.index]);
+  const sent1h = cleanText(row[columns.reminder1h.index]);
+
+  if (diffMinutes <= 60) {
+    if (sent1h) {
+      return {
+        type: "",
+        reason: "Recordatorio de 1h ya enviado",
+        diffMinutes,
+      };
+    }
+
+    return {
+      type: REMINDER_1H_TYPE,
+      message: REMINDER_1H_MESSAGE,
+      markerColumn: columns.reminder1h,
+      diffMinutes,
+    };
+  }
+
+  if (meetingDate.getHours() >= 11 && diffMinutes <= 180) {
+    if (sent3h) {
+      return {
+        type: "",
+        reason: "Recordatorio de 3h ya enviado",
+        diffMinutes,
+      };
+    }
+
+    return {
+      type: REMINDER_3H_TYPE,
+      message: REMINDER_3H_MESSAGE,
+      markerColumn: columns.reminder3h,
+      diffMinutes,
+    };
+  }
+
+  return {
+    type: "",
+    reason: "Todavia no corresponde enviar recordatorio",
+    diffMinutes,
+  };
+}
+
+function prepareReminderRows(values, columns, options = {}) {
+  const now = options.now || new Date();
+  const responsableFilter = normalizeText(options.responsable || "");
+  const statusIndex = columns.status?.index ?? 13;
+  const rows = [];
+  const invalidos = [];
+  const sinHora = [];
+  const skipped = [];
+  const rowsByPhone = new Map();
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] || [];
+    const rowNumber = i + 1;
+
+    if (!hasContactData(row)) continue;
+
+    const estado = normalizeText(row[statusIndex]);
+    if (estado === normalizeText(INVALID_STATUS) || estado === normalizeText(DUPLICATE_STATUS)) {
+      continue;
+    }
+
+    const responsable = normalizeText(row[columns.responsable.index]);
+    if (responsableFilter && responsable !== responsableFilter) {
+      continue;
+    }
+
+    const rawDate = cleanText(row[columns.capacitacionDate.index]);
+    if (!rawDate) continue;
+
+    const parsed = parseCapacitacionDate(rawDate, now);
+    if (!parsed.date) {
+      skipped.push({
+        rowNumber,
+        name: normalizeWhitespace(row[4]) || `Fila ${rowNumber}`,
+        reason: parsed.reason,
+        rawDate,
+      });
+      continue;
+    }
+
+    const decision = resolveReminderDecision(row, columns, parsed.date, parsed.hasTime, now);
+    if (!decision.type) {
+      if (decision.reason === "La fecha de capacitacion no tiene hora") {
+        sinHora.push({
+          rowNumber,
+          name: normalizeWhitespace(row[4]) || `Fila ${rowNumber}`,
+          rawDate,
+          reason: decision.reason,
+        });
+      }
+
+      continue;
+    }
+
+    const firstName = normalizeWhitespace(row[4]);
+    const lastName = normalizeWhitespace(row[5]);
+    const club = normalizeWhitespace(row[1]);
+    const rawPhone = cleanText(row[10]);
+    const rawLink = cleanText(row[11]);
+    const finalPhone = resolvePhone(rawPhone, rawLink);
+
+    const itemBase = {
+      progressType: "coordinadoresReminder",
+      rowNumber,
+      rowNumbersToMark: [rowNumber],
+      name: firstName || lastName || `Fila ${rowNumber}`,
+      club,
+      rawPhone,
+      rawLink,
+      phone: finalPhone,
+      responsable: cleanText(row[columns.responsable.index]),
+      capacitacionRaw: rawDate,
+      capacitacionIso: parsed.date.toISOString(),
+      reminderType: decision.type,
+      reminderMessage: decision.message,
+      markerColumn: decision.markerColumn,
+      diffMinutes: decision.diffMinutes,
+    };
+
+    if (!finalPhone) {
+      invalidos.push({
+        ...itemBase,
+        reason: INVALID_STATUS,
+      });
+      continue;
+    }
+
+    if (rowsByPhone.has(finalPhone)) {
+      rowsByPhone.get(finalPhone).rowNumbersToMark.push(rowNumber);
+      continue;
+    }
+
+    rowsByPhone.set(finalPhone, itemBase);
+    rows.push(itemBase);
+  }
+
+  return {
+    rows,
+    invalidos,
+    sinHora,
+    skipped,
+  };
+}
+
+async function getCoordinadoresResponsables() {
+  assertRequiredConfig(["GOOGLE_SHEET_ID"]);
+
+  const sheets = await getSheetsClient();
+  const values = await fetchSheetRows(sheets);
+  const columns = resolveCoordinadoresColumns(values);
+
+  if (!columns.responsable) {
+    return [];
+  }
+
+  const seen = new Map();
+
+  for (let i = 1; i < values.length; i++) {
+    const value = normalizeWhitespace(values[i]?.[columns.responsable.index]);
+    if (!value) continue;
+
+    const key = normalizeText(value);
+    if (!seen.has(key)) {
+      seen.set(key, value);
+    }
+  }
+
+  return Array.from(seen.values()).sort((a, b) => a.localeCompare(b, "es"));
+}
+
 async function batchUpdateValues(sheets, data) {
   if (!data.length) return;
 
@@ -354,6 +787,16 @@ async function markAsContacted(sheets, rowNumber) {
       values: [[CONTACTED_STATUS]],
     },
   ]);
+}
+
+async function markReminderSent(sheets, item) {
+  const sentAt = formatDateTimeForSheet();
+  const data = item.rowNumbersToMark.map((rowNumber) => ({
+    range: `${SHEET_NAME}!${item.markerColumn.letter}${rowNumber}`,
+    values: [[sentAt]],
+  }));
+
+  await batchUpdateValues(sheets, data);
 }
 
 async function waitForWhatsApp(page) {
@@ -523,6 +966,9 @@ async function isWhatsAppShellLoaded(page) {
 }
 
 async function waitForWhatsAppShellReady(page, control, sendProgress) {
+  const progressType = typeof control?.getType === "function"
+    ? control.getType()
+    : "coordinadores";
   const startedAt = Date.now();
   let lastProgressAt = 0;
   let qrAlreadyReported = false;
@@ -534,7 +980,7 @@ async function waitForWhatsAppShellReady(page, control, sendProgress) {
       if (!qrAlreadyReported) {
         qrAlreadyReported = true;
         sendProgress({
-          type: "coordinadores",
+          type: progressType,
           step: "qr_waiting",
           message: "WhatsApp pide QR. Escanealo para continuar.",
         });
@@ -553,7 +999,7 @@ async function waitForWhatsAppShellReady(page, control, sendProgress) {
       lastProgressAt = elapsedSeconds;
       const loadingLabel = await getWhatsAppLoadingLabel(page);
       sendProgress({
-        type: "coordinadores",
+        type: progressType,
         step: "whatsapp_loading",
         message: loadingLabel
           ? `${loadingLabel}. Esperando WhatsApp... ${elapsedSeconds}s`
@@ -631,6 +1077,10 @@ function signatureMatchesPhone(signature, phone) {
   return suffix.length >= 8 && signatureDigits.includes(suffix);
 }
 
+function getItemProgressType(item) {
+  return item.progressType || "coordinadores";
+}
+
 async function hasMessageComposer(page) {
   return await page.evaluate(() => {
     const selectors = [
@@ -678,7 +1128,7 @@ async function waitForChatReady(page, item, control, sendProgress, options = {})
       if (!qrAlreadyReported) {
         qrAlreadyReported = true;
         sendProgress({
-          type: "coordinadores",
+          type: getItemProgressType(item),
           step: "qr_waiting",
           name: item.name,
           club: item.club,
@@ -716,7 +1166,7 @@ async function waitForChatReady(page, item, control, sendProgress, options = {})
       if (!chatTargetAlreadyReported) {
         chatTargetAlreadyReported = true;
         sendProgress({
-          type: "coordinadores",
+          type: getItemProgressType(item),
           step: "chat_loading",
           name: item.name,
           club: item.club,
@@ -731,7 +1181,7 @@ async function waitForChatReady(page, item, control, sendProgress, options = {})
       lastProgressAt = elapsedSeconds;
       const loadingLabel = await getWhatsAppLoadingLabel(page);
       sendProgress({
-        type: "coordinadores",
+        type: getItemProgressType(item),
         step: "chat_loading",
         name: item.name,
         club: item.club,
@@ -756,7 +1206,7 @@ async function openChat(page, item, url, control, sendProgress) {
       const previousSignature = await getActiveChatSignature(page);
 
       sendProgress({
-        type: "coordinadores",
+        type: getItemProgressType(item),
         step: "chat_opening",
         name: item.name,
         club: item.club,
@@ -787,7 +1237,7 @@ async function openChat(page, item, url, control, sendProgress) {
 
       if (attempt < CHAT_OPEN_RETRIES) {
         sendProgress({
-          type: "coordinadores",
+          type: getItemProgressType(item),
           step: "chat_retry",
           name: item.name,
           club: item.club,
@@ -862,6 +1312,349 @@ async function openChatAndSend(page, item, secondMessage, control, sendProgress)
   };
 }
 
+async function openChatAndSendReminder(page, item, control, sendProgress) {
+  const url = buildWhatsAppUrl(item.phone);
+
+  console.log("[COORDINADORES][REMINDER OPEN CHAT]", {
+    rowNumber: item.rowNumber,
+    name: item.name,
+    club: item.club,
+    phone: item.phone,
+    reminderType: item.reminderType,
+    diffMinutes: item.diffMinutes,
+  });
+
+  await openChat(page, item, url, control, sendProgress);
+
+  await controlCheckpoint(control, sendProgress);
+  await sendMessage(page, item.reminderMessage);
+
+  return {
+    message: item.reminderMessage,
+    reminderType: item.reminderType,
+  };
+}
+
+async function runCoordinadoresReminders(sendProgress = () => {}, options = {}) {
+  assertRequiredConfig(["GOOGLE_SHEET_ID"]);
+
+  const reminders = [];
+  const errores = [];
+  let invalidos = [];
+  let sinHora = [];
+  let rows = [];
+  let browser = null;
+  let stoppedByLimit = false;
+
+  const control = options.control || createNoopControl();
+  const responsable = cleanText(options.responsable);
+
+  try {
+    await controlCheckpoint(control, sendProgress);
+
+    console.log("[COORDINADORES][REMINDERS] creando cliente Sheets...");
+    const sheets = await getSheetsClient();
+
+    console.log("[COORDINADORES][REMINDERS] leyendo sheet...");
+    const values = await fetchSheetRows(sheets);
+    const columns = await ensureReminderColumns(sheets, values);
+
+    await controlCheckpoint(control, sendProgress);
+
+    const prepared = prepareReminderRows(values, columns, {
+      now: new Date(),
+      responsable,
+    });
+
+    rows = prepared.rows;
+    invalidos = prepared.invalidos;
+    sinHora = prepared.sinHora;
+
+    console.log("[COORDINADORES][REMINDERS] resumen previo", {
+      elegibles: rows.length,
+      invalidos: invalidos.length,
+      sinHora: sinHora.length,
+      responsable: responsable || "(todos)",
+      limitePorCorrida: MAX_CONTACTS_PER_RUN,
+    });
+
+    sendProgress({
+      type: "coordinadoresReminder",
+      step: "rows_ready",
+      total: rows.length,
+      invalidos: invalidos.length,
+      sinHora: sinHora.length,
+      errores: 0,
+      contactados: 0,
+      maxPerRun: MAX_CONTACTS_PER_RUN,
+      responsable,
+      message: `Se encontraron ${rows.length} recordatorios para enviar`,
+    });
+
+    await controlCheckpoint(control, sendProgress);
+    await markRowsStatus(sheets, invalidos, INVALID_STATUS);
+
+    if (!rows.length) {
+      sendProgress({
+        type: "coordinadoresReminder",
+        step: "done",
+        total: 0,
+        contactados: 0,
+        invalidos: invalidos.length,
+        sinHora: sinHora.length,
+        errores: 0,
+        maxPerRun: MAX_CONTACTS_PER_RUN,
+        stoppedByLimit: false,
+        message: "No hay recordatorios para enviar ahora",
+      });
+
+      return {
+        date: new Date().toISOString(),
+        type: "coordinadoresReminder",
+        message: REMINDER_3H_MESSAGE,
+        reminderMessage1: REMINDER_3H_MESSAGE,
+        reminderMessage2: REMINDER_1H_MESSAGE,
+        total: invalidos.length + sinHora.length,
+        maxPerRun: MAX_CONTACTS_PER_RUN,
+        stoppedByLimit: false,
+        contactados: [],
+        reminders: [],
+        invalidos,
+        sinHora,
+        errores,
+      };
+    }
+
+    browser = await puppeteer.launch({
+      headless: false,
+      userDataDir: SESSION_DIR,
+      executablePath: fs.existsSync(CHROME_PATH) ? CHROME_PATH : undefined,
+      defaultViewport: null,
+      args: ["--start-maximized"],
+    });
+
+    const page = await browser.newPage();
+    page.setDefaultTimeout(CHAT_READY_TIMEOUT_MS);
+    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
+
+    sendProgress({
+      type: "coordinadoresReminder",
+      step: "whatsapp_loading",
+      message: "Abriendo WhatsApp para recordatorios",
+    });
+
+    await page.goto("https://web.whatsapp.com/", {
+      waitUntil: "domcontentloaded",
+      timeout: NAVIGATION_TIMEOUT_MS,
+    });
+    await waitForWhatsAppShellReady(page, control, sendProgress);
+
+    for (let i = 0; i < rows.length; i++) {
+      await controlCheckpoint(control, sendProgress);
+
+      if (reminders.length >= MAX_CONTACTS_PER_RUN) {
+        stoppedByLimit = true;
+        break;
+      }
+
+      const item = rows[i];
+
+      sendProgress({
+        type: "coordinadoresReminder",
+        step: "processing",
+        current: i + 1,
+        total: rows.length,
+        name: item.name,
+        club: item.club,
+        contactados: reminders.length,
+        invalidos: invalidos.length,
+        sinHora: sinHora.length,
+        errores: errores.length,
+        maxPerRun: MAX_CONTACTS_PER_RUN,
+        reminderType: item.reminderType,
+        message: `Procesando recordatorio ${i + 1} de ${rows.length}`,
+      });
+
+      try {
+        const sendResult = await openChatAndSendReminder(
+          page,
+          item,
+          control,
+          sendProgress
+        );
+
+        await controlCheckpoint(control, sendProgress);
+        await markReminderSent(sheets, item);
+
+        reminders.push({
+          name: item.name,
+          club: item.club,
+          phone: item.phone,
+          rowNumber: item.rowNumber,
+          rowNumbersToMark: item.rowNumbersToMark,
+          reminderType: sendResult.reminderType,
+          message: sendResult.message,
+          capacitacionRaw: item.capacitacionRaw,
+          capacitacionIso: item.capacitacionIso,
+          diffMinutes: item.diffMinutes,
+        });
+
+        sendProgress({
+          type: "coordinadoresReminder",
+          step: "item_success",
+          current: i + 1,
+          total: rows.length,
+          name: item.name,
+          club: item.club,
+          contactados: reminders.length,
+          invalidos: invalidos.length,
+          sinHora: sinHora.length,
+          errores: errores.length,
+          maxPerRun: MAX_CONTACTS_PER_RUN,
+          reminderType: item.reminderType,
+        });
+
+        if (reminders.length >= MAX_CONTACTS_PER_RUN) {
+          stoppedByLimit = true;
+          break;
+        }
+
+        sendProgress({
+          type: "coordinadoresReminder",
+          step: "between_chats",
+          name: item.name,
+          contactados: reminders.length,
+          invalidos: invalidos.length,
+          sinHora: sinHora.length,
+          errores: errores.length,
+          maxPerRun: MAX_CONTACTS_PER_RUN,
+          message: "Esperando 2 minutos antes del proximo recordatorio",
+        });
+
+        await controlledSleep(control, BETWEEN_CHATS_DELAY_MS, sendProgress);
+      } catch (err) {
+        if (err.code === "MANUAL_STOP") {
+          throw err;
+        }
+
+        const reason = err.message || "Error sin detalle";
+        errores.push({
+          name: item.name,
+          club: item.club,
+          phone: item.phone,
+          rowNumber: item.rowNumber,
+          reminderType: item.reminderType,
+          reason,
+        });
+
+        sendProgress({
+          type: "coordinadoresReminder",
+          step: "item_error",
+          current: i + 1,
+          total: rows.length,
+          name: item.name,
+          club: item.club,
+          reason,
+          contactados: reminders.length,
+          invalidos: invalidos.length,
+          sinHora: sinHora.length,
+          errores: errores.length,
+          maxPerRun: MAX_CONTACTS_PER_RUN,
+        });
+      }
+    }
+
+    sendProgress({
+      type: "coordinadoresReminder",
+      step: "done",
+      total: rows.length,
+      contactados: reminders.length,
+      invalidos: invalidos.length,
+      sinHora: sinHora.length,
+      errores: errores.length,
+      maxPerRun: MAX_CONTACTS_PER_RUN,
+      stoppedByLimit,
+      message: stoppedByLimit
+        ? `Recordatorios frenados por limite de ${MAX_CONTACTS_PER_RUN}`
+        : "Recordatorios finalizados",
+    });
+
+    return {
+      date: new Date().toISOString(),
+      type: "coordinadoresReminder",
+      message: REMINDER_3H_MESSAGE,
+      reminderMessage1: REMINDER_3H_MESSAGE,
+      reminderMessage2: REMINDER_1H_MESSAGE,
+      total: reminders.length + invalidos.length + sinHora.length + errores.length,
+      maxPerRun: MAX_CONTACTS_PER_RUN,
+      stoppedByLimit,
+      contactados: reminders,
+      reminders,
+      invalidos,
+      sinHora,
+      errores,
+    };
+  } catch (err) {
+    console.error("[COORDINADORES][REMINDERS] error general:", err);
+
+    if (err.code === "MANUAL_STOP") {
+      return {
+        date: new Date().toISOString(),
+        type: "coordinadoresReminder",
+        message: REMINDER_3H_MESSAGE,
+        reminderMessage1: REMINDER_3H_MESSAGE,
+        reminderMessage2: REMINDER_1H_MESSAGE,
+        total: reminders.length + invalidos.length + sinHora.length + errores.length,
+        maxPerRun: MAX_CONTACTS_PER_RUN,
+        stoppedByLimit: true,
+        stoppedManually: true,
+        contactados: reminders,
+        reminders,
+        invalidos,
+        sinHora,
+        errores,
+      };
+    }
+
+    sendProgress({
+      type: "coordinadoresReminder",
+      step: "failed",
+      total: rows.length,
+      contactados: reminders.length,
+      invalidos: invalidos.length,
+      sinHora: sinHora.length,
+      errores: errores.length + 1,
+      maxPerRun: MAX_CONTACTS_PER_RUN,
+      message: err.message,
+    });
+
+    return {
+      date: new Date().toISOString(),
+      type: "coordinadoresReminder",
+      message: REMINDER_3H_MESSAGE,
+      reminderMessage1: REMINDER_3H_MESSAGE,
+      reminderMessage2: REMINDER_1H_MESSAGE,
+      total: 0,
+      maxPerRun: MAX_CONTACTS_PER_RUN,
+      stoppedByLimit,
+      contactados: [],
+      reminders: [],
+      invalidos: [],
+      sinHora,
+      errores: [
+        {
+          name: "Error general",
+          reason: err.message,
+        },
+      ],
+    };
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
+}
+
 async function runCoordinadores(sendProgress = () => {}, options = {}) {
   assertRequiredConfig(["GOOGLE_SHEET_ID"]);
 
@@ -874,6 +1667,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
   let stoppedByLimit = false;
 
   const control = options.control || createNoopControl();
+  const responsable = cleanText(options.responsable);
   const secondMessage = buildSecondMessage();
 
   try {
@@ -884,10 +1678,14 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
 
     console.log("[COORDINADORES] leyendo sheet...");
     const values = await fetchSheetRows(sheets);
+    const columns = resolveCoordinadoresColumns(values);
 
     await controlCheckpoint(control, sendProgress);
 
-    const prepared = prepareRows(values);
+    const prepared = prepareRows(values, {
+      columns,
+      responsable,
+    });
     rows = prepared.rows;
     invalidos = prepared.invalidos;
     duplicados = prepared.duplicados;
@@ -896,6 +1694,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
       elegiblesUnicos: rows.length,
       invalidos: invalidos.length,
       duplicados: duplicados.length,
+      responsable: responsable || "(todos)",
       limitePorCorrida: MAX_CONTACTS_PER_RUN,
     });
 
@@ -908,6 +1707,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
       errores: 0,
       contactados: 0,
       maxPerRun: MAX_CONTACTS_PER_RUN,
+      responsable,
       secondMessage,
       message: `Se encontraron ${rows.length} telefonos unicos para procesar`,
     });
@@ -926,6 +1726,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
       errores: 0,
       contactados: 0,
       maxPerRun: MAX_CONTACTS_PER_RUN,
+      responsable,
       message: "Duplicados e invalidos marcados en el Sheet",
     });
 
@@ -939,6 +1740,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
         duplicados: duplicados.length,
         errores: 0,
         maxPerRun: MAX_CONTACTS_PER_RUN,
+        responsable,
         stoppedByLimit: false,
         message: "No hay coordinadores para contactar",
       });
@@ -950,6 +1752,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
         secondMessage,
         total: invalidos.length + duplicados.length,
         maxPerRun: MAX_CONTACTS_PER_RUN,
+        responsable,
         stoppedByLimit: false,
         contactados: [],
         invalidos,
@@ -1006,6 +1809,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
         duplicados: duplicados.length,
         errores: errores.length,
         maxPerRun: MAX_CONTACTS_PER_RUN,
+        responsable,
         secondMessage,
         message: `Procesando ${i + 1} de ${rows.length}`,
       });
@@ -1044,6 +1848,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
           duplicados: duplicados.length,
           errores: errores.length,
           maxPerRun: MAX_CONTACTS_PER_RUN,
+          responsable,
         });
 
         if (contactados.length >= MAX_CONTACTS_PER_RUN) {
@@ -1060,6 +1865,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
           duplicados: duplicados.length,
           errores: errores.length,
           maxPerRun: MAX_CONTACTS_PER_RUN,
+          responsable,
           message: "Esperando 2 minutos antes del proximo chat",
         });
 
@@ -1099,6 +1905,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
             duplicados: duplicados.length,
             errores: errores.length,
             maxPerRun: MAX_CONTACTS_PER_RUN,
+            responsable,
           });
 
           continue;
@@ -1125,6 +1932,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
           duplicados: duplicados.length,
           errores: errores.length,
           maxPerRun: MAX_CONTACTS_PER_RUN,
+          responsable,
         });
       }
     }
@@ -1138,6 +1946,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
       duplicados: duplicados.length,
       errores: errores.length,
       maxPerRun: MAX_CONTACTS_PER_RUN,
+      responsable,
       stoppedByLimit,
       message: stoppedByLimit
         ? `Proceso frenado por limite de ${MAX_CONTACTS_PER_RUN} contactos`
@@ -1151,6 +1960,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
       secondMessage,
       total: contactados.length + invalidos.length + duplicados.length + errores.length,
       maxPerRun: MAX_CONTACTS_PER_RUN,
+      responsable,
       stoppedByLimit,
       contactados,
       invalidos,
@@ -1168,6 +1978,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
         secondMessage,
         total: contactados.length + invalidos.length + duplicados.length + errores.length,
         maxPerRun: MAX_CONTACTS_PER_RUN,
+        responsable,
         stoppedByLimit: true,
         stoppedManually: true,
         contactados,
@@ -1186,6 +1997,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
       duplicados: duplicados.length,
       errores: errores.length + 1,
       maxPerRun: MAX_CONTACTS_PER_RUN,
+      responsable,
       message: err.message,
     });
 
@@ -1196,6 +2008,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
       secondMessage,
       total: 0,
       maxPerRun: MAX_CONTACTS_PER_RUN,
+      responsable,
       stoppedByLimit,
       contactados: [],
       invalidos: [],
@@ -1216,6 +2029,8 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
 
 module.exports = {
   runCoordinadores,
+  runCoordinadoresReminders,
+  getCoordinadoresResponsables,
   buildSecondMessage,
   getSuggestedDate,
 };
