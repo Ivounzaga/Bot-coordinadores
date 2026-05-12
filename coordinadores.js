@@ -1133,6 +1133,53 @@ function getItemProgressType(item) {
   return item.progressType || "coordinadores";
 }
 
+function isLeaveSiteDialog(dialog) {
+  const message = normalizeText(dialog.message());
+
+  return (
+    dialog.type() === "beforeunload" ||
+    message.includes("abandonar") ||
+    message.includes("salir del sitio") ||
+    message.includes("leave site") ||
+    message.includes("reload this site")
+  );
+}
+
+function attachDialogAutoHandler(page, sendProgress, progressType) {
+  if (page.__coordinadoresDialogHandlerAttached) return;
+  page.__coordinadoresDialogHandlerAttached = true;
+
+  page.on("dialog", async (dialog) => {
+    const message = dialog.message();
+    const dialogType = dialog.type();
+    const shouldLeave = isLeaveSiteDialog(dialog);
+
+    console.log("[COORDINADORES][DIALOG]", {
+      type: dialogType,
+      message,
+      action: shouldLeave ? "accept" : "dismiss",
+    });
+
+    try {
+      if (shouldLeave) {
+        await dialog.accept();
+      } else {
+        await dialog.dismiss();
+      }
+
+      sendProgress({
+        type: progressType,
+        step: "browser_dialog_handled",
+        message: shouldLeave
+          ? "Se acepto automaticamente el aviso de abandonar WhatsApp para pasar al siguiente chat"
+          : `Se cerro automaticamente un aviso del navegador: ${message || dialogType}`,
+      });
+    } catch (err) {
+      console.error("[COORDINADORES][DIALOG ERROR]", err);
+    }
+  });
+}
+
 async function hasMessageComposer(page) {
   return await page.evaluate(() => {
     const selectors = [
@@ -1486,6 +1533,7 @@ async function runCoordinadoresReminders(sendProgress = () => {}, options = {}) 
     });
 
     const page = await browser.newPage();
+    attachDialogAutoHandler(page, sendProgress, "coordinadoresReminder");
     page.setDefaultTimeout(CHAT_READY_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
 
@@ -1822,6 +1870,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
     });
 
     const page = await browser.newPage();
+    attachDialogAutoHandler(page, sendProgress, "coordinadores");
     page.setDefaultTimeout(CHAT_READY_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     console.log("[COORDINADORES] navegador listo; espero carga inicial de WhatsApp");
