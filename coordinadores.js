@@ -19,8 +19,8 @@ const SESSION_DIR = WHATSAPP_SESSION_DIR;
 const CHROME_PATH = CHROME_EXECUTABLE_PATH;
 const CREDENTIALS_PATH = GOOGLE_APPLICATION_CREDENTIALS;
 
-const LAST_CONTACT_COL = "M";
-const STATUS_COL = "N";
+const FALLBACK_LAST_CONTACT_COL = "M";
+const FALLBACK_STATUS_COL = "N";
 
 const CONTACTED_STATUS = "contactado";
 const DUPLICATE_STATUS = "Telefono duplicado";
@@ -443,6 +443,40 @@ function getCanonicalRowByPhone(values, statusIndex) {
   return canonicalRowByPhone;
 }
 
+function isHandledContactStatus(status) {
+  const normalized = normalizeText(status);
+
+  return Boolean(
+    cleanText(status) &&
+      normalized !== normalizeText(DUPLICATE_STATUS) &&
+      normalized !== normalizeText(INVALID_STATUS)
+  );
+}
+
+function findHandledPhoneEntry(values, columns, phone) {
+  const statusIndex = columns.status?.index ?? 13;
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] || [];
+    const rowNumber = i + 1;
+
+    if (!hasContactData(row)) continue;
+
+    const finalPhone = resolvePhone(cleanText(row[10]), cleanText(row[11]));
+    if (finalPhone !== phone) continue;
+
+    const status = cleanText(row[statusIndex]);
+    if (isHandledContactStatus(status)) {
+      return {
+        rowNumber,
+        status,
+      };
+    }
+  }
+
+  return null;
+}
+
 function prepareRows(values, options = {}) {
   const columns = options.columns || resolveCoordinadoresColumns(values);
   const responsableFilter = normalizeText(options.responsable || "");
@@ -817,25 +851,35 @@ async function batchUpdateValues(sheets, data) {
   }
 }
 
-async function markRowsStatus(sheets, items, status) {
+function getSheetColumnLetter(column, fallback) {
+  return column?.letter || fallback;
+}
+
+async function markRowsStatus(sheets, items, status, columns = {}) {
+  const statusColumn = getSheetColumnLetter(columns.status, FALLBACK_STATUS_COL);
   const data = items.map((item) => ({
-    range: `${SHEET_NAME}!${STATUS_COL}${item.rowNumber}`,
+    range: `${SHEET_NAME}!${statusColumn}${item.rowNumber}`,
     values: [[status]],
   }));
 
   await batchUpdateValues(sheets, data);
 }
 
-async function markAsContacted(sheets, rowNumber) {
+async function markAsContacted(sheets, rowNumber, columns = {}) {
   const today = formatDateForSheet();
+  const lastContactColumn = getSheetColumnLetter(
+    columns.lastContact,
+    FALLBACK_LAST_CONTACT_COL
+  );
+  const statusColumn = getSheetColumnLetter(columns.status, FALLBACK_STATUS_COL);
 
   await batchUpdateValues(sheets, [
     {
-      range: `${SHEET_NAME}!${LAST_CONTACT_COL}${rowNumber}`,
+      range: `${SHEET_NAME}!${lastContactColumn}${rowNumber}`,
       values: [[today]],
     },
     {
-      range: `${SHEET_NAME}!${STATUS_COL}${rowNumber}`,
+      range: `${SHEET_NAME}!${statusColumn}${rowNumber}`,
       values: [[CONTACTED_STATUS]],
     },
   ]);
@@ -930,12 +974,48 @@ async function clickSend(page) {
   for (const selector of selectors) {
     const btn = await page.$(selector);
     if (btn) {
-      await btn.click();
+      const clickable = await btn.evaluateHandle((el) => el.closest("button") || el);
+      const element = clickable.asElement();
+      if (element) {
+        await element.click();
+      } else {
+        await btn.click();
+      }
       return true;
     }
   }
 
   return false;
+}
+
+async function isComposerEmpty(page) {
+  return await page.evaluate(() => {
+    const boxes = Array.from(document.querySelectorAll('[contenteditable="true"]'));
+    const target = boxes[boxes.length - 1];
+    if (!target) return true;
+
+    const text = (target.innerText || target.textContent || "")
+      .replace(/\u200b/g, "")
+      .replace(/\u00a0/g, " ")
+      .trim();
+
+    return text === "";
+  }).catch(() => false);
+}
+
+async function waitForComposerEmpty(page, timeout = 8000) {
+  return await page.waitForFunction(() => {
+    const boxes = Array.from(document.querySelectorAll('[contenteditable="true"]'));
+    const target = boxes[boxes.length - 1];
+    if (!target) return true;
+
+    const text = (target.innerText || target.textContent || "")
+      .replace(/\u200b/g, "")
+      .replace(/\u00a0/g, " ")
+      .trim();
+
+    return text === "";
+  }, { timeout }).then(() => true).catch(() => false);
 }
 
 async function isInvalidWhatsAppNumber(page) {
@@ -1180,6 +1260,52 @@ function attachDialogAutoHandler(page, sendProgress, progressType) {
   });
 }
 
+async function clearBeforeUnloadHandlers(page) {
+  await page.evaluate(() => {
+    try {
+      window.onbeforeunload = null;
+    } catch {}
+  }).catch(() => {});
+}
+
+async function installBeforeUnloadBlocker(page) {
+  await page.evaluateOnNewDocument(() => {
+    const blockedEvent = "beforeunload";
+    const originalAddEventListener = EventTarget.prototype.addEventListener;
+
+    EventTarget.prototype.addEventListener = function patchedAddEventListener(
+      type,
+      listener,
+      options
+    ) {
+      if (String(type).toLowerCase() === blockedEvent) {
+        return undefined;
+      }
+
+      return originalAddEventListener.call(this, type, listener, options);
+    };
+
+    try {
+      Object.defineProperty(window, "onbeforeunload", {
+        configurable: true,
+        get() {
+          return null;
+        },
+        set() {
+          return null;
+        },
+      });
+    } catch {}
+  });
+
+  await clearBeforeUnloadHandlers(page);
+}
+
+async function prepareWhatsAppPage(page, sendProgress, progressType) {
+  attachDialogAutoHandler(page, sendProgress, progressType);
+  await installBeforeUnloadBlocker(page);
+}
+
 async function hasMessageComposer(page) {
   return await page.evaluate(() => {
     const selectors = [
@@ -1314,10 +1440,12 @@ async function openChat(page, item, url, control, sendProgress) {
       });
 
       await controlCheckpoint(control, sendProgress);
+      await clearBeforeUnloadHandlers(page);
       await page.goto(url, {
         waitUntil: "domcontentloaded",
         timeout: NAVIGATION_TIMEOUT_MS,
       });
+      await clearBeforeUnloadHandlers(page);
       await controlledSleep(control, 3000, sendProgress);
       await waitForChatReady(page, item, control, sendProgress, { previousSignature });
       return;
@@ -1369,10 +1497,17 @@ async function sendMessage(page, message) {
 
   await sleep(400);
 
-  const sent = await clickSend(page);
-  if (!sent) {
-    await page.keyboard.press("Enter");
+  const clicked = await clickSend(page);
+  if (clicked && (await waitForComposerEmpty(page))) {
+    return;
   }
+
+  if (await isComposerEmpty(page)) {
+    return;
+  }
+
+  await page.keyboard.press("Enter");
+  await waitForComposerEmpty(page);
 }
 
 async function openChatAndSend(page, item, secondMessage, control, sendProgress) {
@@ -1491,7 +1626,7 @@ async function runCoordinadoresReminders(sendProgress = () => {}, options = {}) 
     });
 
     await controlCheckpoint(control, sendProgress);
-    await markRowsStatus(sheets, invalidos, INVALID_STATUS);
+    await markRowsStatus(sheets, invalidos, INVALID_STATUS, columns);
 
     if (!rows.length) {
       sendProgress({
@@ -1533,7 +1668,7 @@ async function runCoordinadoresReminders(sendProgress = () => {}, options = {}) 
     });
 
     const page = await browser.newPage();
-    attachDialogAutoHandler(page, sendProgress, "coordinadoresReminder");
+    await prepareWhatsAppPage(page, sendProgress, "coordinadoresReminder");
     page.setDefaultTimeout(CHAT_READY_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
 
@@ -1760,6 +1895,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
 
   const contactados = [];
   const errores = [];
+  const sentPhonesThisRun = new Set();
   let invalidos = [];
   let duplicados = [];
   let rows = [];
@@ -1814,8 +1950,8 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
 
     await controlCheckpoint(control, sendProgress);
 
-    await markRowsStatus(sheets, invalidos, INVALID_STATUS);
-    await markRowsStatus(sheets, duplicados, DUPLICATE_STATUS);
+    await markRowsStatus(sheets, invalidos, INVALID_STATUS, columns);
+    await markRowsStatus(sheets, duplicados, DUPLICATE_STATUS, columns);
 
     sendProgress({
       type: "coordinadores",
@@ -1870,7 +2006,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
     });
 
     const page = await browser.newPage();
-    attachDialogAutoHandler(page, sendProgress, "coordinadores");
+    await prepareWhatsAppPage(page, sendProgress, "coordinadores");
     page.setDefaultTimeout(CHAT_READY_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     console.log("[COORDINADORES] navegador listo; espero carga inicial de WhatsApp");
@@ -1897,6 +2033,73 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
       }
 
       const item = rows[i];
+
+      if (sentPhonesThisRun.has(item.phone)) {
+        await markRowsStatus(sheets, [item], DUPLICATE_STATUS, columns);
+        duplicados.push({
+          name: item.name,
+          club: item.club,
+          phone: item.phone,
+          rowNumber: item.rowNumber,
+          reason: DUPLICATE_STATUS,
+        });
+
+        sendProgress({
+          type: "coordinadores",
+          step: "item_duplicate",
+          current: i + 1,
+          total: rows.length,
+          name: item.name,
+          club: item.club,
+          contactados: contactados.length,
+          invalidos: invalidos.length,
+          duplicados: duplicados.length,
+          errores: errores.length,
+          maxPerRun: MAX_CONTACTS_PER_RUN,
+          responsable,
+          message: `Se saltea ${item.name} porque este telefono ya fue procesado en esta corrida`,
+        });
+        continue;
+      }
+
+      const latestValues = await fetchSheetRows(sheets);
+      const handledEntry = findHandledPhoneEntry(latestValues, columns, item.phone);
+
+      if (handledEntry) {
+        if (handledEntry.rowNumber !== item.rowNumber) {
+          await markRowsStatus(sheets, [item], DUPLICATE_STATUS, columns);
+          duplicados.push({
+            name: item.name,
+            club: item.club,
+            phone: item.phone,
+            rowNumber: item.rowNumber,
+            firstRowNumber: handledEntry.rowNumber,
+            reason: `${DUPLICATE_STATUS}: ya figura ${handledEntry.status} en fila ${handledEntry.rowNumber}`,
+          });
+        }
+
+        sendProgress({
+          type: "coordinadores",
+          step: "item_already_contacted",
+          current: i + 1,
+          total: rows.length,
+          name: item.name,
+          club: item.club,
+          contactados: contactados.length,
+          invalidos: invalidos.length,
+          duplicados: duplicados.length,
+          errores: errores.length,
+          maxPerRun: MAX_CONTACTS_PER_RUN,
+          responsable,
+          message:
+            handledEntry.rowNumber === item.rowNumber
+              ? `Se saltea ${item.name} porque esta fila ya tiene estado ${handledEntry.status}`
+              : `Se saltea ${item.name} porque el telefono ya tiene estado ${handledEntry.status} en la fila ${handledEntry.rowNumber}`,
+        });
+        continue;
+      }
+
+      sentPhonesThisRun.add(item.phone);
 
       sendProgress({
         type: "coordinadores",
@@ -1925,7 +2128,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
         );
 
         await controlCheckpoint(control, sendProgress);
-        await markAsContacted(sheets, item.rowNumber);
+        await markAsContacted(sheets, item.rowNumber, columns);
 
         contactados.push({
           name: item.name,
@@ -1980,7 +2183,7 @@ async function runCoordinadores(sendProgress = () => {}, options = {}) {
 
         if (reason === INVALID_STATUS) {
           try {
-            await markRowsStatus(sheets, [item], INVALID_STATUS);
+            await markRowsStatus(sheets, [item], INVALID_STATUS, columns);
           } catch (sheetErr) {
             console.error("[COORDINADORES] error marcando invalido", item.rowNumber, sheetErr);
           }
