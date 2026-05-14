@@ -253,15 +253,15 @@ function buildSecondMessage(date = new Date()) {
 }
 
 function buildFirstMessageVariantA(name) {
-  return `Buenas ${name}. Como estas? Todo bien? Te escribo para coordinar la capacitacion con jugadores y STAFF del club.`;
+  return `Buenas ${name}. Como estas? Todo bien? Por aca Ivo Unzaga de AFA en GLOOUDS. Te escribo para coordinar la capacitacion con jugadores y STAFF del club.`;
 }
 
 function buildFirstMessageVariantB(name) {
-  return `Hola ${name}. Como va? Te contacto para coordinar la capacitacion con jugadores y STAFF del club.`;
+  return `Hola ${name}. Como va? Por aca Ivo Unzaga de AFA en GLOOUDS. Te contacto para coordinar la capacitacion con jugadores y STAFF del club.`;
 }
 
 function buildFirstMessageVariantC(name) {
-  return `Buenas ${name}. Espero que estes bien. Te escribo para organizar la capacitacion con jugadores y STAFF del club.`;
+  return `Buenas ${name}. Espero que estes bien. Por aca Ivo Unzaga de AFA en GLOOUDS. Te escribo para organizar la capacitacion con jugadores y STAFF del club.`;
 }
 
 function resolveFirstMessage(name, rowNumber) {
