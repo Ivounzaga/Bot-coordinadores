@@ -12,6 +12,8 @@ session/
 
 # Local runtime data
 data/history.json
+logs/
+*.pid
 *.log
 start.sh
 

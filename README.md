@@ -44,6 +44,13 @@ cp .env.example .env
 npm start
 ```
 
+### Abrir y detener con doble click en macOS
+
+Tambien podes usar estos archivos desde Finder:
+
+- `Abrir Bot Coordinadores.command`: instala dependencias si faltan, levanta el servidor y abre `http://localhost:3000/coordinadores.html`.
+- `Detener Bot Coordinadores.command`: pide al dashboard que frene corridas activas, apaga el scheduler de recordatorios y cierra el servidor.
+
 ## WhatsApp
 
 Este proyecto no usa la API paga de WhatsApp. Usa WhatsApp Web con Puppeteer.
