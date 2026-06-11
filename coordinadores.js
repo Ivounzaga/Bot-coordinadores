@@ -42,9 +42,28 @@ const NAVIGATION_TIMEOUT_MS = 120 * 1000;
 const CHAT_READY_TIMEOUT_MS = 25 * 60 * 1000;
 const CHAT_OPEN_RETRIES = 2;
 const CHAT_RETRY_DELAY_MS = 15 * 1000;
+const GOOGLE_API_TIMEOUT_MS = 30 * 1000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout(promise, timeoutMs, label) {
+  let timeoutId;
+
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const error = new Error(`${label} tardo mas de ${Math.round(timeoutMs / 1000)} segundos.`);
+      error.code = "TIMEOUT";
+      reject(error);
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function createNoopControl() {
@@ -363,11 +382,15 @@ async function getSheetsClient() {
 }
 
 async function fetchSheetRows(sheets) {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A:AZ`,
-    valueRenderOption: "FORMATTED_VALUE",
-  });
+  const res = await withTimeout(
+    sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `${SHEET_NAME}!A:AZ`,
+      valueRenderOption: "FORMATTED_VALUE",
+    }),
+    GOOGLE_API_TIMEOUT_MS,
+    "La lectura de Google Sheets"
+  );
 
   return res.data.values || [];
 }
@@ -841,13 +864,17 @@ async function batchUpdateValues(sheets, data) {
   const chunkSize = 400;
   for (let i = 0; i < data.length; i += chunkSize) {
     const chunk = data.slice(i, i + chunkSize);
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId: SHEET_ID,
-      requestBody: {
-        valueInputOption: "USER_ENTERED",
-        data: chunk,
-      },
-    });
+    await withTimeout(
+      sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: SHEET_ID,
+        requestBody: {
+          valueInputOption: "USER_ENTERED",
+          data: chunk,
+        },
+      }),
+      GOOGLE_API_TIMEOUT_MS,
+      "La escritura en Google Sheets"
+    );
   }
 }
 

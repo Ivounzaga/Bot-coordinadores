@@ -42,9 +42,11 @@ add_pid() {
 
   [[ "$candidate" =~ ^[0-9]+$ ]] || return
 
-  for existing in "${PIDS_TO_STOP[@]}"; do
-    [[ "$existing" == "$candidate" ]] && return
-  done
+  if [[ ${#PIDS_TO_STOP[*]} -gt 0 ]]; then
+    for existing in "${PIDS_TO_STOP[@]}"; do
+      [[ "$existing" == "$candidate" ]] && return
+    done
+  fi
 
   PIDS_TO_STOP+=("$candidate")
 }
@@ -106,7 +108,7 @@ echo "Carpeta: $ROOT_DIR"
 echo "Puerto: $PORT"
 echo
 
-PIDS_TO_STOP=()
+declare -a PIDS_TO_STOP=()
 
 if [[ -f "$PID_FILE" ]]; then
   PID_FROM_FILE="$(tr -cd '0-9' < "$PID_FILE")"
@@ -151,7 +153,7 @@ fi
 rm -f "$PID_FILE"
 rm -f "$PORT_FILE"
 
-BOT_BROWSER_PIDS=()
+declare -a BOT_BROWSER_PIDS=()
 while read -r pid command; do
   [[ "$command" == *"--user-data-dir=$SESSION_DIR"* ]] || continue
   BOT_BROWSER_PIDS+=("$pid")

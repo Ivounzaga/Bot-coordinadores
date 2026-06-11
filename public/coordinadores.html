@@ -866,7 +866,7 @@
           await loadHistory();
         }
       } catch (error) {
-        setStatus(error.message || "Hubo un error.");
+        markStartError(CONTACT_FLOW, error.message || "Hubo un error.");
       }
     }
 
@@ -906,8 +906,28 @@
         updateFlowButtons();
         setStatus("Recordatorios iniciados. Podes seguir el progreso en esta pantalla.");
       } catch (error) {
-        setStatus(error.message || "Hubo un error.");
+        markStartError(REMINDER_FLOW, error.message || "Hubo un error.");
       }
+    }
+
+    function markStartError(type, message) {
+      setActiveFlow(type);
+      flowState = { status: "idle", startedAt: null };
+      flowStates[type] = { ...(flowStates[type] || {}), status: "idle", startedAt: null };
+      updateFlowButtons();
+      updateProgress({
+        type,
+        step: "failed",
+        total: 0,
+        contactados: 0,
+        invalidos: 0,
+        duplicados: 0,
+        sinHora: 0,
+        errores: 1,
+        message: `No se inicio: ${message}`,
+      });
+      setStatus(message);
+      loadSchedulerState();
     }
 
     async function loadResponsables() {
