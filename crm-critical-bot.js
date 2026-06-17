@@ -17,7 +17,7 @@ const URGENCY_CRITICAL = "Cr\u00edtico";
 const STATE_NEW = "Nuevo";
 const STATE_IN_PROGRESS = "En gesti\u00f3n";
 const INVALID_WHATSAPP_NUMBER = "Telefono invalido o sin WhatsApp";
-const CONTACTED_RESULT = "Mensaje enviado";
+const CONTACTED_RESULT = "En espera de respuesta";
 
 const CRM_BOT_USERS = ["Ivo Unzaga", "Santiago Muller", "Facundo Lugo"];
 const CRM_CREDENTIAL_ENV_KEYS = {

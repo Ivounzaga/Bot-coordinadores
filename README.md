@@ -70,7 +70,7 @@ Selecciona jugadores con:
 - `trazabilidad = true`
 - sin responsable asignado
 
-Para menores, intenta escribirle al tutor y al jugador. Para mayores, solo al jugador. Antes de abrir WhatsApp, toma el lote de casos en el CRM con el usuario logueado y pasa el estado a `En gestion` si estaba vacio o `Nuevo`. Despues de cada WhatsApp enviado registra intento/actividad en el CRM.
+Para menores, intenta escribirle al tutor y al jugador. Para mayores, solo al jugador. Antes de abrir WhatsApp, toma el lote de casos en el CRM con el usuario logueado y pasa el estado a `En gestion` si estaba vacio o `Nuevo`. Despues de cada WhatsApp enviado registra intento/actividad en el CRM con resultado `En espera de respuesta`.
 
 La pantalla web esta en `http://localhost:3000/crm-bot.html`. El login es solo por nombre: Ivo Unzaga, Santiago Muller o Facundo Lugo. El backend usa las credenciales CRM de la persona elegida en la pantalla y asigna el caso a ese mismo usuario.
 
