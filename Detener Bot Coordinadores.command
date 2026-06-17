@@ -7,6 +7,7 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$ROOT_DIR/logs"
 PID_FILE="$LOG_DIR/bot-coordinadores.pid"
 PORT_FILE="$LOG_DIR/bot-coordinadores.port"
+BOT_LABEL="${BOT_STOP_LABEL:-Bot Coordinadores}"
 
 cd "$ROOT_DIR" || exit 1
 
@@ -103,7 +104,7 @@ if [[ "$SESSION_DIR" != /* ]]; then
   SESSION_DIR="$ROOT_DIR/$SESSION_DIR"
 fi
 
-echo "=== Detener Bot Coordinadores ==="
+echo "=== Detener $BOT_LABEL ==="
 echo "Carpeta: $ROOT_DIR"
 echo "Puerto: $PORT"
 echo
@@ -164,6 +165,6 @@ if [[ "${#BOT_BROWSER_PIDS[@]}" -gt 0 ]]; then
 fi
 
 echo
-echo "Listo. Bot Coordinadores detenido."
+echo "Listo. $BOT_LABEL detenido."
 
 pause_and_exit 0

@@ -368,11 +368,11 @@
           </label>
           <label class="field">
             <span>Entre tutor/jugador</span>
-            <input id="between-contacts-input" type="number" min="5" max="180" value="30" />
+            <input id="between-contacts-input" type="number" min="10" max="300" value="90" />
           </label>
           <label class="field">
             <span>Entre jugadores</span>
-            <input id="between-players-input" type="number" min="10" max="300" value="60" />
+            <input id="between-players-input" type="number" min="10" max="300" value="90" />
           </label>
           <button id="dry-run-button" class="btn-secondary" onclick="runCrmBot(true)">Simular</button>
           <button id="run-button" class="btn-primary" onclick="runCrmBot(false)">Correr bot</button>
@@ -581,8 +581,8 @@
 
       const limit = Number(document.getElementById("limit-input").value || 20);
       const afterSendSettleMs = readSecondsAsMs("after-send-input", 15);
-      const betweenContactsMs = readSecondsAsMs("between-contacts-input", 30);
-      const delayMs = readSecondsAsMs("between-players-input", 60);
+      const betweenContactsMs = readSecondsAsMs("between-contacts-input", 90);
+      const delayMs = readSecondsAsMs("between-players-input", 90);
       flowState = { status: "running", startedAt: new Date().toISOString() };
       updateFlowButtons();
       updateProgress({
@@ -672,7 +672,22 @@
         text.textContent = data.message || "Jugadores listos";
         meta.textContent = `${total} en esta corrida`;
         count.textContent = `0 / ${total}`;
-        bar.style.width = total ? "8%" : "100%";
+        bar.style.width = data.dryRun ? (total ? "8%" : "100%") : (total ? "35%" : "100%");
+      }
+
+      if (data.step === "claiming_batch") {
+        text.textContent = data.message || "Tomando casos";
+        meta.textContent = "Reserva de casos";
+        count.textContent = `0 / ${total}`;
+        bar.style.width = "5%";
+      }
+
+      if (data.step === "claiming_case" || data.step === "case_claimed" || data.step === "case_claim_skipped") {
+        const percent = total ? Math.max(5, Math.min(35, (current / total) * 35)) : 5;
+        text.textContent = data.message || "Tomando casos";
+        meta.textContent = "Reserva de casos";
+        count.textContent = `${current} / ${total}`;
+        bar.style.width = `${percent}%`;
       }
 
       if (data.step === "processing") {

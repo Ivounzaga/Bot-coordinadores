@@ -57,8 +57,8 @@ const CHAT_OPEN_RETRIES = 2;
 const CHAT_RETRY_DELAY_MS = 15 * 1000;
 const SEND_CONFIRM_TIMEOUT_MS = 20 * 1000;
 const DEFAULT_AFTER_SEND_SETTLE_MS = 15000;
-const DEFAULT_BETWEEN_CONTACTS_MS = 30000;
-const DEFAULT_BETWEEN_PLAYERS_MS = 60000;
+const DEFAULT_BETWEEN_CONTACTS_MS = 90 * 1000;
+const DEFAULT_BETWEEN_PLAYERS_MS = 90 * 1000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -410,8 +410,8 @@ Variables principales:
   CRM_DRY_RUN           true por defecto; false manda mensajes
   CRM_CRITICAL_LIMIT    Jugadores maximos por corrida (20 por defecto)
   CRM_AFTER_SEND_SETTLE_MS Pausa despues de apretar enviar (15000 por defecto)
-  CRM_BETWEEN_CONTACTS_MS  Pausa entre tutor/jugador (30000 por defecto)
-  CRM_SEND_DELAY_MS        Pausa entre jugadores (60000 por defecto)
+  CRM_BETWEEN_CONTACTS_MS  Pausa entre tutor/jugador (90000 por defecto)
+  CRM_SEND_DELAY_MS        Pausa entre jugadores (90000 por defecto)
 `);
 }
 
@@ -746,6 +746,45 @@ function prepareWorkItems(rows, profile, configRows, limit) {
       skippedContacts,
     };
   });
+}
+
+function getWorkItemSkipReason(item) {
+  if (item.contacts.length) return "";
+  if (item.skippedContacts.length) {
+    return item.skippedContacts.map((contact) => contact.reason).join(" | ");
+  }
+
+  return "Sin telefono util para jugador/tutor";
+}
+
+function makeSkippedWorkItem(item, reason = getWorkItemSkipReason(item)) {
+  return {
+    id: item.player.id_usuario,
+    name: item.playerName,
+    reason,
+  };
+}
+
+function selectContactableWorkItems(workItems, limit) {
+  const selected = [];
+  const skipped = [];
+  const target = limit || workItems.length;
+
+  for (const item of workItems) {
+    if (selected.length >= target) break;
+
+    if (!item.contacts.length) {
+      skipped.push(makeSkippedWorkItem(item));
+      continue;
+    }
+
+    selected.push(item);
+  }
+
+  return {
+    workItems: selected,
+    skipped,
+  };
 }
 
 function summarizeWorkItems(workItems) {
@@ -1366,7 +1405,7 @@ async function launchWhatsApp() {
   return { browser, page };
 }
 
-async function claimPlayerForOperator(ctx, profile, item) {
+async function claimPlayerForOperator(ctx, profile, item, options = {}) {
   const player = item.player;
   const now = new Date().toISOString();
   const update = {
@@ -1378,7 +1417,31 @@ async function claimPlayerForOperator(ctx, profile, item) {
     update.estado = STATE_IN_PROGRESS;
   }
 
-  await crmRest(ctx, "PATCH", "jugadores", { id_usuario: `eq.${player.id_usuario}` }, update);
+  const params = {
+    id_usuario: `eq.${player.id_usuario}`,
+    select: "id_usuario,responsable,estado,updated_at",
+  };
+
+  if (options.onlyIfUnassigned) {
+    params.responsable = "is.null";
+  }
+
+  const updatedRows = await crmRest(
+    ctx,
+    "PATCH",
+    "jugadores",
+    params,
+    update,
+    "return=representation"
+  );
+  const updatedRow = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
+
+  if (options.onlyIfUnassigned && !updatedRow) {
+    return {
+      claimed: false,
+      reason: "Ya fue tomado por otro usuario",
+    };
+  }
 
   await crmRest(
     ctx,
@@ -1396,6 +1459,93 @@ async function claimPlayerForOperator(ctx, profile, item) {
   item.player = {
     ...item.player,
     ...update,
+    ...(updatedRow || {}),
+  };
+
+  return {
+    claimed: true,
+  };
+}
+
+async function claimWorkBatchForOperator(
+  ctx,
+  profile,
+  candidateWorkItems,
+  options,
+  sendProgress = () => {}
+) {
+  const claimed = [];
+  const skipped = [];
+  const target = options.limit || candidateWorkItems.length;
+
+  emitProgress(sendProgress, {
+    step: "claiming_batch",
+    total: target,
+    current: 0,
+    contactados: 0,
+    skipped: 0,
+    errores: 0,
+    message: `Tomando hasta ${target} casos antes de contactar`,
+  });
+
+  for (const item of candidateWorkItems) {
+    if (claimed.length >= target) break;
+
+    await controlCheckpoint(options.control, sendProgress);
+
+    if (!item.contacts.length) {
+      skipped.push(makeSkippedWorkItem(item));
+      emitProgress(sendProgress, {
+        step: "case_claim_skipped",
+        total: target,
+        current: claimed.length,
+        name: item.playerName,
+        skipped: skipped.length,
+        message: `${item.playerName} salteado: ${getWorkItemSkipReason(item)}`,
+      });
+      continue;
+    }
+
+    emitProgress(sendProgress, {
+      step: "claiming_case",
+      total: target,
+      current: claimed.length + 1,
+      name: item.playerName,
+      skipped: skipped.length,
+      message: `Tomando caso ${claimed.length + 1}/${target}: ${item.playerName}`,
+    });
+
+    const result = await claimPlayerForOperator(ctx, profile, item, {
+      onlyIfUnassigned: true,
+    });
+
+    if (!result.claimed) {
+      skipped.push(makeSkippedWorkItem(item, result.reason));
+      emitProgress(sendProgress, {
+        step: "case_claim_skipped",
+        total: target,
+        current: claimed.length,
+        name: item.playerName,
+        skipped: skipped.length,
+        message: `${item.playerName} ya fue tomado por otra persona`,
+      });
+      continue;
+    }
+
+    claimed.push(item);
+    emitProgress(sendProgress, {
+      step: "case_claimed",
+      total: target,
+      current: claimed.length,
+      name: item.playerName,
+      skipped: skipped.length,
+      message: `Caso tomado: ${item.playerName}`,
+    });
+  }
+
+  return {
+    workItems: claimed,
+    skipped,
   };
 }
 
@@ -1475,16 +1625,12 @@ async function runSending(ctx, profile, workItems, options, sendProgress = () =>
         message: `Procesando ${item.playerName}`,
       });
 
-      if (options.updateCrm) {
-        await claimPlayerForOperator(ctx, profile, item);
-      }
-
       emitProgress(sendProgress, {
         step: "management_saved",
         current: index + 1,
         total: workItems.length,
         name: item.playerName,
-        message: `Caso tomado y gestion guardada para ${item.playerName}`,
+        message: `Caso ya tomado y gestion guardada para ${item.playerName}`,
       });
 
       const contactResults = [];
@@ -1650,7 +1796,27 @@ async function runCrmCriticalBot(sendProgress = () => {}, options = {}) {
   ]);
 
   const candidates = filterCriticalCandidates(rawRows);
-  const workItems = prepareWorkItems(candidates, profile, configRows, runtimeOptions.limit);
+  const allWorkItems = prepareWorkItems(candidates, profile, configRows);
+
+  let workItems = [];
+  let claimSkipped = [];
+
+  if (runtimeOptions.dryRun || !runtimeOptions.updateCrm) {
+    const selection = selectContactableWorkItems(allWorkItems, runtimeOptions.limit);
+    workItems = selection.workItems;
+    claimSkipped = selection.skipped;
+  } else {
+    const claimResult = await claimWorkBatchForOperator(
+      ctx,
+      profile,
+      allWorkItems,
+      runtimeOptions,
+      sendProgress
+    );
+    workItems = claimResult.workItems;
+    claimSkipped = claimResult.skipped;
+  }
+
   const summary = summarizeWorkItems(workItems);
 
   emitProgress(sendProgress, {
@@ -1659,12 +1825,15 @@ async function runCrmCriticalBot(sendProgress = () => {}, options = {}) {
     candidates: candidates.length,
     contacts: summary.contacts,
     menores: summary.minors,
-    sinTelefono: summary.withoutContacts,
+    sinTelefono: summary.withoutContacts + claimSkipped.length,
     contactados: 0,
-    skipped: 0,
+    skipped: claimSkipped.length,
     errores: 0,
+    dryRun: runtimeOptions.dryRun,
     operatorName: profile.nombre || runtimeOptions.operatorName,
-    message: `Se encontraron ${candidates.length} jugadores criticos sin asignar`,
+    message: runtimeOptions.dryRun || !runtimeOptions.updateCrm
+      ? `Se encontraron ${candidates.length} jugadores criticos sin asignar`
+      : `Se tomaron ${workItems.length} casos de ${candidates.length} candidatos`,
   });
 
   if (runtimeOptions.dryRun) {
@@ -1678,15 +1847,27 @@ async function runCrmCriticalBot(sendProgress = () => {}, options = {}) {
       candidates: candidates.length,
       contacts: summary.contacts,
       menores: summary.minors,
-      sinTelefono: summary.withoutContacts,
+      sinTelefono: summary.withoutContacts + claimSkipped.length,
       contactados: [],
-      skipped: workItems
-        .filter((item) => item.contacts.length === 0)
-        .map((item) => ({
-          id: item.player.id_usuario,
-          name: item.playerName,
-          reason: "Sin telefono util para jugador/tutor",
-        })),
+      skipped: claimSkipped,
+      errores: [],
+    };
+  }
+
+  if (!workItems.length) {
+    console.log("[CRM] No se pudo tomar ningun caso contactable para esta corrida.");
+    return {
+      date: new Date().toISOString(),
+      type: "crmCritical",
+      dryRun: false,
+      operatorName: profile.nombre || runtimeOptions.operatorName || "",
+      total: 0,
+      candidates: candidates.length,
+      contacts: 0,
+      menores: 0,
+      sinTelefono: claimSkipped.length,
+      contactados: [],
+      skipped: claimSkipped,
       errores: [],
     };
   }
@@ -1696,9 +1877,10 @@ async function runCrmCriticalBot(sendProgress = () => {}, options = {}) {
   );
 
   const results = await runSending(ctx, profile, workItems, runtimeOptions, sendProgress);
+  const allSkipped = [...claimSkipped, ...results.skipped];
 
   console.log(
-    `[CRM] Listo. Jugadores contactados: ${results.sentPlayers.length}. Errores: ${results.errors.length}. Salteados: ${results.skipped.length}.`
+    `[CRM] Listo. Jugadores contactados: ${results.sentPlayers.length}. Errores: ${results.errors.length}. Salteados: ${allSkipped.length}.`
   );
 
   if (results.errors.length) {
@@ -1712,7 +1894,7 @@ async function runCrmCriticalBot(sendProgress = () => {}, options = {}) {
     step: "finished",
     total: workItems.length,
     contactados: results.sentPlayers.length,
-    skipped: results.skipped.length,
+    skipped: allSkipped.length,
     errores: results.errors.length,
     operatorName: profile.nombre || runtimeOptions.operatorName,
     message: "Bot CRM criticos finalizado",
@@ -1727,9 +1909,9 @@ async function runCrmCriticalBot(sendProgress = () => {}, options = {}) {
     candidates: candidates.length,
     contacts: summary.contacts,
     menores: summary.minors,
-    sinTelefono: summary.withoutContacts,
+    sinTelefono: summary.withoutContacts + claimSkipped.length,
     contactados: results.sentPlayers,
-    skipped: results.skipped,
+    skipped: allSkipped,
     errores: results.errors,
   };
 }

@@ -52,6 +52,7 @@ Tambien podes usar estos archivos desde Finder:
 - `Abrir Bot Coordinadores.command`: instala dependencias si faltan, levanta el servidor y abre `http://localhost:3000/coordinadores.html`.
 - `Abrir Bot CRM.command`: usa el mismo servidor y abre `http://localhost:3000/crm-bot.html`.
 - `Detener Bot Coordinadores.command`: pide al dashboard que frene corridas activas, apaga el scheduler de recordatorios y cierra el servidor.
+- `Detener Bot CRM.command`: hace lo mismo, pero con nombre separado para el bot de jugadores.
 
 ## WhatsApp
 
@@ -69,7 +70,7 @@ Selecciona jugadores con:
 - `trazabilidad = true`
 - sin responsable asignado
 
-Para menores, intenta escribirle al tutor y al jugador. Para mayores, solo al jugador. Cuando logra enviar al menos un WhatsApp, registra intento/actividad en el CRM, asigna el caso al usuario logueado y pasa el estado a `En gestion` si estaba vacio o `Nuevo`.
+Para menores, intenta escribirle al tutor y al jugador. Para mayores, solo al jugador. Antes de abrir WhatsApp, toma el lote de casos en el CRM con el usuario logueado y pasa el estado a `En gestion` si estaba vacio o `Nuevo`. Despues de cada WhatsApp enviado registra intento/actividad en el CRM.
 
 La pantalla web esta en `http://localhost:3000/crm-bot.html`. El login es solo por nombre: Ivo Unzaga, Santiago Muller o Facundo Lugo. El backend usa las credenciales CRM de la persona elegida en la pantalla y asigna el caso a ese mismo usuario.
 
@@ -85,8 +86,8 @@ CRM_FACUNDO_PASSWORD=tu_clave_facundo
 CRM_OPERATOR_NAME=Ivo Unzaga
 CRM_DRY_RUN=true
 CRM_AFTER_SEND_SETTLE_MS=15000
-CRM_BETWEEN_CONTACTS_MS=30000
-CRM_SEND_DELAY_MS=60000
+CRM_BETWEEN_CONTACTS_MS=90000
+CRM_SEND_DELAY_MS=90000
 CRM_ALLOWED_ORIGINS=https://tu-app.vercel.app
 ```
 
@@ -106,14 +107,18 @@ El mensaje al tutor de menores se puede ajustar con `CRM_TUTOR_MESSAGE`. El mens
 
 ### Uso por equipo
 
-Cada persona debe correr el bot en su propia PC para usar su sesion local de WhatsApp Web. El flujo recomendado es:
+Cada persona debe correr el bot de jugadores en su propia PC para usar su sesion local de WhatsApp Web. El flujo recomendado es:
 
-- Clonar o copiar este proyecto en la PC.
+- Descargar este proyecto completo desde GitHub, o clonarlo.
 - Instalar dependencias con `npm install`.
 - Completar `.env` con las credenciales CRM.
-- Abrir `http://localhost:3000/crm-bot.html`.
+- Abrir `Abrir Bot CRM.command` o entrar a `http://localhost:3000/crm-bot.html`.
 - Elegir su nombre en el login.
 - Escanear WhatsApp Web la primera vez. La sesion queda guardada en `session/`.
+
+Para Mac, no descargar archivos sueltos: hace falta el proyecto completo porque el bot usa `server.js`, `runner.js`, `crm-critical-bot.js`, `config.js`, `package.json`, `package-lock.json`, `public/crm-bot.html` y los `.command` de CRM. No compartir `.env`, `session/` ni `node_modules/`.
+
+Guia corta para el equipo: `README-MAC-CRM.md`.
 
 Vercel puede servir una interfaz, pero no puede mantener Chrome/WhatsApp Web con sesion persistente. La parte que envia WhatsApp tiene que correr localmente en cada PC o en una maquina dedicada con navegador.
 
