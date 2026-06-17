@@ -2,6 +2,7 @@ const { runAutomation } = require("./automation");
 const { runFollowup } = require("./followup");
 const { runReminder } = require("./reminder");
 const { runCoordinadores, runCoordinadoresReminders } = require("./coordinadores");
+const { runCrmCriticalBot } = require("./crm-critical-bot");
 
 async function runScript(sendProgress, options = {}) {
   return await runAutomation(sendProgress, {
@@ -33,10 +34,17 @@ async function runCoordinadoresRemindersScript(sendProgress, options = {}) {
   });
 }
 
+async function runCrmCriticalScript(sendProgress, options = {}) {
+  return await runCrmCriticalBot(sendProgress, {
+    ...options,
+  });
+}
+
 module.exports = {
   runScript,
   runFollowupScript,
   runReminderScript,
   runCoordinadoresScript,
   runCoordinadoresRemindersScript,
+  runCrmCriticalScript,
 };

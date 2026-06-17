@@ -3,7 +3,8 @@
     "version": "1.0.0",
     "main": "server.js",
     "scripts": {
-        "start": "node server.js"
+        "start": "node server.js",
+        "crm:critical": "node crm-critical-bot.js"
     },
     "dependencies": {
         "csv-parse": "^6.2.1",

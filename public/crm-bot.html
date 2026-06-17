@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bot CRM Criticos</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --surface: #fff;
+      --surface-2: #eef2f7;
+      --text: #101828;
+      --muted: #64748b;
+      --border: #d7dde8;
+      --blue: #2563eb;
+      --green: #15803d;
+      --red: #dc2626;
+      --yellow: #b45309;
+      --shadow: 0 10px 28px rgba(15, 23, 42, .08);
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .shell {
+      width: min(1120px, calc(100% - 28px));
+      margin: 24px auto 42px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    h1, h2, p { margin: 0; }
+
+    h1 {
+      font-size: 28px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    .span-12 { grid-column: span 12; }
+    .span-8 { grid-column: span 8; }
+    .span-4 { grid-column: span 4; }
+    .span-3 { grid-column: span 3; }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .panel-title h2 {
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .login {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 22px;
+    }
+
+    .login-box {
+      width: min(520px, 100%);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 24px;
+    }
+
+    .user-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .metric {
+      min-height: 104px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .metric-value {
+      font-size: 31px;
+      line-height: 1;
+      font-weight: 850;
+    }
+
+    .metric.blue .metric-value { color: var(--blue); }
+    .metric.green .metric-value { color: var(--green); }
+    .metric.red .metric-value { color: var(--red); }
+    .metric.yellow .metric-value { color: var(--yellow); }
+
+    button, input {
+      min-height: 42px;
+      border-radius: var(--radius);
+      font: inherit;
+      font-size: 14px;
+    }
+
+    button {
+      border: 0;
+      padding: 11px 15px;
+      font-weight: 780;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: .62;
+      cursor: not-allowed;
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      color: var(--text);
+      background: #fff;
+    }
+
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+    .btn-green { background: #dcfce7; color: #14532d; }
+    .btn-yellow { background: #fef3c7; color: #78350f; }
+    .btn-red { background: #fee2e2; color: #7f1d1d; }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 8px 11px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 780;
+    }
+
+    .status-pill.running {
+      background: #dcfce7;
+      border-color: #bbf7d0;
+      color: #166534;
+    }
+
+    .status-pill.paused {
+      background: #fef3c7;
+      border-color: #fde68a;
+      color: #92400e;
+    }
+
+    .status-pill.stopping {
+      background: #fee2e2;
+      border-color: #fecaca;
+      color: #991b1b;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      max-width: 180px;
+    }
+
+    .field span {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .progress-text {
+      min-height: 26px;
+      font-weight: 780;
+      margin-bottom: 12px;
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 12px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e2e8f0;
+      border: 1px solid #cbd5e1;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--green), var(--blue));
+      transition: width .25s ease;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .pill {
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: #334155;
+      font-size: 13px;
+      font-weight: 720;
+    }
+
+    .message-box {
+      white-space: pre-wrap;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      border-radius: var(--radius);
+      padding: 12px;
+      line-height: 1.45;
+      color: #1f2937;
+    }
+
+    .history-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .run-item {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 13px;
+      background: #fff;
+    }
+
+    .run-title {
+      font-weight: 820;
+      margin-bottom: 6px;
+    }
+
+    .run-meta {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .empty {
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      color: var(--muted);
+      text-align: center;
+      background: var(--surface-2);
+    }
+
+    @media (max-width: 860px) {
+      .span-8, .span-4, .span-3 { grid-column: span 12; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .user-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <section id="login-view" class="login">
+    <div class="login-box">
+      <h1>Bot CRM Criticos</h1>
+      <p class="subtitle">Ingresar usuario</p>
+      <div id="user-grid" class="user-grid"></div>
+    </div>
+  </section>
+
+  <main id="app-view" class="shell" style="display:none;">
+    <header class="topbar">
+      <div>
+        <h1>Bot CRM Criticos</h1>
+        <p class="subtitle">Usuario: <strong id="current-user"></strong></p>
+      </div>
+      <div class="actions">
+        <span id="flow-status" class="status-pill">Estado: inactivo</span>
+        <button class="btn-secondary" onclick="logout()">Cambiar usuario</button>
+      </div>
+    </header>
+
+    <section class="grid">
+      <div class="panel metric blue span-3">
+        <div class="metric-label">Jugadores</div>
+        <div id="metric-total" class="metric-value">0</div>
+      </div>
+      <div class="panel metric green span-3">
+        <div class="metric-label">Contactados</div>
+        <div id="metric-sent" class="metric-value">0</div>
+      </div>
+      <div class="panel metric yellow span-3">
+        <div class="metric-label">Sin telefono</div>
+        <div id="metric-skipped" class="metric-value">0</div>
+      </div>
+      <div class="panel metric red span-3">
+        <div class="metric-label">Errores</div>
+        <div id="metric-errors" class="metric-value">0</div>
+      </div>
+
+      <div class="panel span-8">
+        <div class="panel-title">
+          <h2>Corrida</h2>
+          <span id="progress-meta" class="muted">Esperando inicio</span>
+        </div>
+
+        <div class="actions" style="margin-bottom:14px;">
+          <label class="field">
+            <span>Limite</span>
+            <input id="limit-input" type="number" min="1" max="200" value="20" />
+          </label>
+          <label class="field">
+            <span>Despues de enviar</span>
+            <input id="after-send-input" type="number" min="5" max="120" value="15" />
+          </label>
+          <label class="field">
+            <span>Entre tutor/jugador</span>
+            <input id="between-contacts-input" type="number" min="5" max="180" value="30" />
+          </label>
+          <label class="field">
+            <span>Entre jugadores</span>
+            <input id="between-players-input" type="number" min="10" max="300" value="60" />
+          </label>
+          <button id="dry-run-button" class="btn-secondary" onclick="runCrmBot(true)">Simular</button>
+          <button id="run-button" class="btn-primary" onclick="runCrmBot(false)">Correr bot</button>
+          <button id="pause-button" class="btn-yellow" onclick="controlFlow('pause')" style="display:none;">Pausar</button>
+          <button id="resume-button" class="btn-green" onclick="controlFlow('resume')" style="display:none;">Reanudar</button>
+          <button id="stop-button" class="btn-red" onclick="controlFlow('stop')" style="display:none;">Detener</button>
+        </div>
+
+        <div id="progress-text" class="progress-text">Todavia no hay una ejecucion en curso.</div>
+        <div class="progress-track">
+          <div id="progress-bar" class="progress-bar"></div>
+        </div>
+        <div class="pill-row">
+          <div class="pill">Candidatos: <span id="progress-candidates">0</span></div>
+          <div class="pill">Contactos: <span id="progress-contacts">0</span></div>
+          <div class="pill">Menores: <span id="progress-minors">0</span></div>
+          <div class="pill">Progreso: <span id="progress-count">0 / 0</span></div>
+        </div>
+      </div>
+
+      <div class="panel span-4">
+        <div class="panel-title">
+          <h2>Mensajes</h2>
+          <span class="muted">Actual</span>
+        </div>
+        <div class="message-box" id="player-message"></div>
+        <div style="height:10px;"></div>
+        <div class="message-box" id="tutor-message"></div>
+      </div>
+
+      <div class="panel span-12">
+        <div class="panel-title">
+          <h2>Historial</h2>
+          <span id="history-count" class="muted">0 registros</span>
+        </div>
+        <div id="history-list" class="history-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const FLOW = "crmCritical";
+    const USER_STORAGE_KEY = "crm_bot_user";
+    const LOCAL_API_BASE = "http://localhost:3000";
+    const DEFAULT_USERS = ["Ivo Unzaga", "Santiago Muller", "Facundo Lugo"];
+    const PLAYER_MESSAGE = "Buenas {nombre}, como va? Soy {responsable} de AFA en GLOOUDS.\n\nChe te escribo para veamos que cosas tenemos podes mejorar de tu perfil para que que los seleccionadores de la AFA te elijan a vos por sobre el resto  ¿Tenés 5 minutos para que te llame?";
+    const TUTOR_MESSAGE = "Buenas {tutor} cómo estás? Soy {responsable} de AFA en GLOOUDS. La idea era llamarte para charlar sobre el perfil de tu hijo {jugador}. Tenes 5 min para que te llame?";
+
+    let selectedUser = "";
+    let flowState = { status: "idle", startedAt: null };
+    let flowStates = {};
+
+    function isLocalUi() {
+      return ["localhost", "127.0.0.1", "::1", "[::1]", ""].includes(window.location.hostname);
+    }
+
+    function apiUrl(path) {
+      const base = isLocalUi() ? "" : LOCAL_API_BASE;
+      return `${base}${path}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function formatDate(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "-";
+      return date.toLocaleString("es-AR", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+
+    function setMetric(id, value) {
+      document.getElementById(id).textContent = value ?? 0;
+    }
+
+    function setSelectedUser(name) {
+      selectedUser = name;
+      localStorage.setItem(USER_STORAGE_KEY, name);
+      document.getElementById("current-user").textContent = name;
+      renderMessagePreview();
+      document.getElementById("login-view").style.display = "none";
+      document.getElementById("app-view").style.display = "";
+      loadHistory();
+      loadControlState();
+    }
+
+    function logout() {
+      selectedUser = "";
+      localStorage.removeItem(USER_STORAGE_KEY);
+      document.getElementById("app-view").style.display = "none";
+      document.getElementById("login-view").style.display = "";
+    }
+
+    async function loadUsers() {
+      let users = DEFAULT_USERS;
+
+      try {
+        const res = await fetch(apiUrl("/api/crm-critical-users"));
+        if (res.ok) {
+          const data = await res.json();
+          users = data.users?.length ? data.users : users;
+        }
+      } catch (error) {
+        console.error(error);
+      }
+
+      document.getElementById("user-grid").innerHTML = users
+        .map((name) => `<button class="btn-primary" onclick="setSelectedUser('${escapeHtml(name)}')">${escapeHtml(name)}</button>`)
+        .join("");
+
+      const saved = localStorage.getItem(USER_STORAGE_KEY);
+      if (saved && users.includes(saved)) {
+        setSelectedUser(saved);
+      }
+    }
+
+    function renderMessagePreview() {
+      const responsable = selectedUser || "{responsable}";
+      document.getElementById("player-message").textContent = PLAYER_MESSAGE.replace(/{responsable}/g, responsable);
+      document.getElementById("tutor-message").textContent = TUTOR_MESSAGE.replace(/{responsable}/g, responsable);
+    }
+
+    function updateFlowButtons() {
+      const status = flowState.status || "idle";
+      const statusBox = document.getElementById("flow-status");
+      const run = document.getElementById("run-button");
+      const dry = document.getElementById("dry-run-button");
+      const pause = document.getElementById("pause-button");
+      const resume = document.getElementById("resume-button");
+      const stop = document.getElementById("stop-button");
+
+      statusBox.className = `status-pill ${status}`;
+      statusBox.textContent =
+        status === "running" ? "Estado: ejecutando" :
+        status === "paused" ? "Estado: pausado" :
+        status === "stopping" ? "Estado: deteniendo" :
+        "Estado: inactivo";
+
+      const active = status === "running" || status === "paused" || status === "stopping";
+      run.style.display = active ? "none" : "inline-flex";
+      dry.style.display = active ? "none" : "inline-flex";
+      pause.style.display = status === "running" ? "inline-flex" : "none";
+      resume.style.display = status === "paused" ? "inline-flex" : "none";
+      stop.style.display = active ? "inline-flex" : "none";
+      stop.disabled = status === "stopping";
+    }
+
+    function applyControlSnapshot(snapshot) {
+      flowStates = snapshot || {};
+      if (!flowStates[FLOW]) return;
+      flowState = {
+        status: flowStates[FLOW].status || "idle",
+        startedAt: flowStates[FLOW].startedAt || null,
+      };
+      updateFlowButtons();
+    }
+
+    async function loadControlState() {
+      try {
+        const res = await fetch(apiUrl("/api/control-state"));
+        if (!res.ok) return;
+        applyControlSnapshot(await res.json());
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    async function controlFlow(action) {
+      try {
+        const res = await fetch(apiUrl(`/api/control/${FLOW}/${action}`), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "No se pudo cambiar el estado");
+        flowState = { status: data.state.status, startedAt: data.state.startedAt || null };
+        flowStates[FLOW] = data.state;
+        updateFlowButtons();
+      } catch (error) {
+        document.getElementById("progress-text").textContent = error.message;
+      }
+    }
+
+    function readSecondsAsMs(id, fallbackSeconds) {
+      const value = Number(document.getElementById(id).value || fallbackSeconds);
+      const seconds = Number.isFinite(value) && value >= 0 ? value : fallbackSeconds;
+      return Math.round(seconds * 1000);
+    }
+
+    async function runCrmBot(dryRun) {
+      if (!selectedUser) {
+        logout();
+        return;
+      }
+
+      const limit = Number(document.getElementById("limit-input").value || 20);
+      const afterSendSettleMs = readSecondsAsMs("after-send-input", 15);
+      const betweenContactsMs = readSecondsAsMs("between-contacts-input", 30);
+      const delayMs = readSecondsAsMs("between-players-input", 60);
+      flowState = { status: "running", startedAt: new Date().toISOString() };
+      updateFlowButtons();
+      updateProgress({
+        type: FLOW,
+        step: "starting",
+        total: 0,
+        contactados: 0,
+        skipped: 0,
+        errores: 0,
+        dryRun,
+        message: dryRun ? "Simulando..." : "Iniciando bot..."
+      });
+
+      try {
+        const res = await fetch(apiUrl("/api/run-crm-critical"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            operatorName: selectedUser,
+            dryRun,
+            limit: Number.isFinite(limit) && limit > 0 ? limit : 20,
+            afterSendSettleMs,
+            betweenContactsMs,
+            delayMs,
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "No se pudo iniciar");
+        flowState = {
+          status: data.state?.status || "running",
+          startedAt: data.state?.startedAt || flowState.startedAt,
+        };
+        updateFlowButtons();
+      } catch (error) {
+        flowState = { status: "idle", startedAt: null };
+        updateFlowButtons();
+        updateProgress({
+          type: FLOW,
+          step: "failed",
+          errores: 1,
+          message: error.message,
+        });
+      }
+    }
+
+    function updateProgress(data) {
+      if (data.step === "control_snapshot") {
+        applyControlSnapshot(data.flows);
+        return;
+      }
+
+      if (data.type && data.type !== FLOW) return;
+
+      if (data.controlStatus) {
+        flowState = { ...flowState, status: data.controlStatus };
+        updateFlowButtons();
+      }
+
+      const total = data.total ?? Number(document.getElementById("metric-total").textContent || 0);
+      const sent = data.contactados ?? Number(document.getElementById("metric-sent").textContent || 0);
+      const skipped = data.skipped ?? Number(document.getElementById("metric-skipped").textContent || 0);
+      const errors = data.errores ?? Number(document.getElementById("metric-errors").textContent || 0);
+      const current = data.current ?? 0;
+
+      setMetric("metric-total", total);
+      setMetric("metric-sent", sent);
+      setMetric("metric-skipped", skipped);
+      setMetric("metric-errors", errors);
+
+      if (data.candidates != null) document.getElementById("progress-candidates").textContent = data.candidates;
+      if (data.contacts != null) document.getElementById("progress-contacts").textContent = data.contacts;
+      if (data.menores != null) document.getElementById("progress-minors").textContent = data.menores;
+
+      const text = document.getElementById("progress-text");
+      const meta = document.getElementById("progress-meta");
+      const count = document.getElementById("progress-count");
+      const bar = document.getElementById("progress-bar");
+
+      if (data.step === "starting") {
+        text.textContent = data.message || "Iniciando...";
+        meta.textContent = data.dryRun ? "Simulacion" : "Envio real";
+        count.textContent = "0 / 0";
+        bar.style.width = "3%";
+      }
+
+      if (data.step === "rows_ready") {
+        text.textContent = data.message || "Jugadores listos";
+        meta.textContent = `${total} en esta corrida`;
+        count.textContent = `0 / ${total}`;
+        bar.style.width = total ? "8%" : "100%";
+      }
+
+      if (data.step === "processing") {
+        const percent = total ? Math.max(10, (current / total) * 100) : 10;
+        text.textContent = data.message || "Procesando jugador";
+        count.textContent = `${current} / ${total}`;
+        bar.style.width = `${percent}%`;
+      }
+
+      if (data.step === "management_saved") {
+        text.textContent = data.message || "Gestion guardada";
+      }
+
+      if (data.step === "contact_opening") {
+        text.textContent = data.message || "Abriendo WhatsApp";
+      }
+
+      if (data.step === "contact_success") {
+        text.textContent = data.message || "WhatsApp enviado";
+      }
+
+      if (data.step === "after_send_wait") {
+        text.textContent = data.message || "Esperando confirmacion de envio";
+      }
+
+      if (data.step === "between_contacts") {
+        text.textContent = data.message || "Esperando proximo contacto";
+      }
+
+      if (data.step === "between_players") {
+        text.textContent = data.message || "Esperando";
+      }
+
+      if (data.step === "paused") {
+        text.textContent = data.message || "Proceso pausado";
+        meta.textContent = "Pausado";
+      }
+
+      if (data.step === "resumed") {
+        text.textContent = data.message || "Proceso reanudado";
+        meta.textContent = "Reanudado";
+      }
+
+      if (data.step === "stopping") {
+        text.textContent = data.message || "Deteniendo...";
+        meta.textContent = "Deteniendo";
+      }
+
+      if (data.step === "finished" || data.step === "done") {
+        text.textContent = "Proceso finalizado";
+        meta.textContent = "Completado";
+        bar.style.width = "100%";
+        flowState = { status: "idle", startedAt: null };
+        flowStates[FLOW] = { ...(flowStates[FLOW] || {}), status: "idle", startedAt: null };
+        updateFlowButtons();
+        loadHistory();
+      }
+
+      if (data.step === "failed") {
+        text.textContent = `Error: ${data.message || "sin detalle"}`;
+        meta.textContent = "Fallo";
+        bar.style.width = "100%";
+        flowState = { status: "idle", startedAt: null };
+        flowStates[FLOW] = { ...(flowStates[FLOW] || {}), status: "idle", startedAt: null };
+        updateFlowButtons();
+      }
+    }
+
+    async function loadHistory() {
+      try {
+        const res = await fetch(apiUrl("/api/history"));
+        const history = await res.json();
+        const items = history.filter((item) => item.type === FLOW).slice(0, 12);
+        const list = document.getElementById("history-list");
+        document.getElementById("history-count").textContent = `${items.length} registros`;
+
+        if (!items.length) {
+          list.innerHTML = '<div class="empty">Sin corridas registradas.</div>';
+          return;
+        }
+
+        list.innerHTML = items.map((item) => {
+          const sent = item.contactados?.length || 0;
+          const skipped = item.skipped?.length || 0;
+          const errors = item.errores?.length || 0;
+          const mode = item.dryRun ? "simulacion" : "envio";
+          return `
+            <div class="run-item">
+              <div class="run-title">${escapeHtml(item.operatorName || "-")} · ${escapeHtml(mode)} · ${formatDate(item.date)}</div>
+              <div class="run-meta">
+                Jugadores: ${item.total || 0} · Contactados: ${sent} · Sin telefono: ${skipped} · Errores: ${errors}
+              </div>
+            </div>
+          `;
+        }).join("");
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    function initEvents() {
+      const events = new EventSource(apiUrl("/api/progress"));
+      events.onmessage = (event) => {
+        try {
+          updateProgress(JSON.parse(event.data));
+        } catch (error) {
+          console.error(error);
+        }
+      };
+    }
+
+    renderMessagePreview();
+    loadUsers();
+    initEvents();
+  </script>
+</body>
+</html>

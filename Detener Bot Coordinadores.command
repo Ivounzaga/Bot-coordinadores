@@ -135,7 +135,7 @@ if [[ "${#PIDS_TO_STOP[@]}" -gt 0 ]] && curl -fsS "http://localhost:$PORT/api/co
   echo "Pidiendo al dashboard que detenga corridas activas..."
   curl -sS -X POST "http://localhost:$PORT/api/coordinadores-reminder-scheduler/stop" >/dev/null 2>&1 || true
 
-  for type in initial followup reminder coordinadores coordinadoresReminder; do
+  for type in initial followup reminder coordinadores coordinadoresReminder crmCritical; do
     curl -sS -X POST "http://localhost:$PORT/api/control/$type/stop" >/dev/null 2>&1 || true
   done
 

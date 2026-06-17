@@ -7,6 +7,52 @@ const app = express();
 
 const historyPath = path.join(__dirname, "data/history.json");
 
+function normalizeOrigin(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function getAllowedCorsOrigins() {
+  return String(process.env.CRM_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map(normalizeOrigin)
+    .filter(Boolean);
+}
+
+function isLocalOrigin(origin) {
+  try {
+    const url = new URL(origin);
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedCorsOrigin(origin) {
+  if (!origin) return true;
+  const normalized = normalizeOrigin(origin);
+  return isLocalOrigin(normalized) || getAllowedCorsOrigins().includes(normalized);
+}
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (isAllowedCorsOrigin(origin)) {
+    if (origin) {
+      res.setHeader("Access-Control-Allow-Origin", normalizeOrigin(origin));
+      res.setHeader("Vary", "Origin");
+    }
+
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  }
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(isAllowedCorsOrigin(origin) ? 204 : 403);
+  }
+
+  next();
+});
+
 app.use(express.json());
 app.use(express.static("public"));
 
@@ -50,6 +96,7 @@ const executionState = {
   reminder: createFlowState("reminder"),
   coordinadores: createFlowState("coordinadores"),
   coordinadoresReminder: createFlowState("coordinadoresReminder"),
+  crmCritical: createFlowState("crmCritical"),
 };
 
 const FLOW_TYPES = Object.keys(executionState);
@@ -79,6 +126,7 @@ function getFlowLabel(type) {
   if (type === "reminder") return "recordatorios";
   if (type === "coordinadores") return "coordinadores";
   if (type === "coordinadoresReminder") return "recordatorios de coordinadores";
+  if (type === "crmCritical") return "CRM críticos";
   return "primer mensaje";
 }
 
@@ -969,6 +1017,133 @@ app.post("/api/coordinadores-reminder-scheduler/stop", (req, res) => {
     ok: true,
     scheduler: getCoordinadoresReminderSchedulerState(),
   });
+});
+
+app.get("/api/crm-critical-users", (req, res) => {
+  const { getCrmBotUsers } = require("./crm-critical-bot");
+  res.json({ users: getCrmBotUsers() });
+});
+
+app.post("/api/run-crm-critical", async (req, res) => {
+  const type = "crmCritical";
+  const startResult = startFlow(type);
+
+  if (!startResult.ok) {
+    return res.status(409).json({
+      error: startResult.reason,
+      state: getPublicFlowState(type),
+    });
+  }
+
+  try {
+    const operatorName = String(req.body?.operatorName || "").trim();
+    const dryRun = Boolean(req.body?.dryRun);
+    const rawLimit = Number(req.body?.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : undefined;
+    const rawDelayMs = Number(req.body?.delayMs);
+    const rawBetweenContactsMs = Number(req.body?.betweenContactsMs);
+    const rawAfterSendSettleMs = Number(req.body?.afterSendSettleMs);
+    const delayMs = Number.isFinite(rawDelayMs) && rawDelayMs >= 0 ? rawDelayMs : undefined;
+    const betweenContactsMs =
+      Number.isFinite(rawBetweenContactsMs) && rawBetweenContactsMs >= 0
+        ? rawBetweenContactsMs
+        : undefined;
+    const afterSendSettleMs =
+      Number.isFinite(rawAfterSendSettleMs) && rawAfterSendSettleMs >= 0
+        ? rawAfterSendSettleMs
+        : undefined;
+    const control = createFlowControl(type);
+
+    if (!operatorName) {
+      throw new Error("Elegí quién está usando el bot antes de correrlo.");
+    }
+
+    sendProgress(wrapProgress(type, {
+      step: "starting",
+      operatorName,
+      dryRun,
+      message: dryRun ? "Simulando bot CRM críticos..." : "Iniciando bot CRM críticos...",
+    }));
+
+    const runPromise = new Promise((resolve, reject) => {
+      setImmediate(() => {
+        const { runCrmCriticalScript } = require("./runner");
+
+        runCrmCriticalScript((progress) => {
+          sendProgress(wrapProgress(type, progress));
+        }, {
+          control,
+          operatorName,
+          dryRun,
+          ...(limit ? { limit } : {}),
+          ...(delayMs != null ? { delayMs } : {}),
+          ...(betweenContactsMs != null ? { betweenContactsMs } : {}),
+          ...(afterSendSettleMs != null ? { afterSendSettleMs } : {}),
+        }).then(resolve, reject);
+      });
+    });
+
+    getFlowState(type).currentRunPromise = runPromise;
+
+    runPromise
+      .then((result) => {
+        const historyEntry = {
+          ...result,
+          type,
+          operatorName: result.operatorName || operatorName,
+          crmCritical: result.contactados || [],
+        };
+
+        appendHistory(historyEntry);
+
+        sendProgress(wrapProgress(type, {
+          step: "finished",
+          operatorName: historyEntry.operatorName,
+          dryRun: historyEntry.dryRun,
+          summary: {
+            total: historyEntry.total || 0,
+            contactados: historyEntry.contactados?.length || 0,
+            skipped: historyEntry.skipped?.length || 0,
+            errores: historyEntry.errores?.length || 0,
+          },
+        }));
+
+        finishFlow(type);
+      })
+      .catch((error) => {
+        console.error("[CRM CRITICAL] error:", error);
+
+        sendProgress(wrapProgress(type, {
+          step: error.code === "MANUAL_STOP" ? "stopped" : "failed",
+          operatorName,
+          dryRun,
+          message: error.message,
+        }));
+
+        finishFlow(type, {
+          lastError: error.message,
+        });
+      });
+
+    return res.status(202).json({
+      started: true,
+      state: getPublicFlowState(type),
+      message: dryRun ? "Simulación CRM iniciada" : "Bot CRM iniciado",
+    });
+  } catch (error) {
+    console.error("[CRM CRITICAL] error:", error);
+
+    sendProgress(wrapProgress(type, {
+      step: error.code === "MANUAL_STOP" ? "stopped" : "failed",
+      message: error.message,
+    }));
+
+    finishFlow(type, {
+      lastError: error.message,
+    });
+
+    return res.status(error.code === "MANUAL_STOP" ? 409 : 500).json({ error: error.message });
+  }
 });
 
 app.listen(PORT, () => {

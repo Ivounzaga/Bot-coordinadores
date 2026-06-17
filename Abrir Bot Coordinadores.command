@@ -8,7 +8,8 @@ LOG_DIR="$ROOT_DIR/logs"
 PID_FILE="$LOG_DIR/bot-coordinadores.pid"
 PORT_FILE="$LOG_DIR/bot-coordinadores.port"
 LOG_FILE="$LOG_DIR/bot-coordinadores.log"
-URL_DEFAULT_PATH="/coordinadores.html"
+BOT_LABEL="${BOT_DASHBOARD_LABEL:-Bot Coordinadores}"
+URL_DEFAULT_PATH="${BOT_DASHBOARD_PATH:-/coordinadores.html}"
 
 mkdir -p "$LOG_DIR" "$ROOT_DIR/data"
 cd "$ROOT_DIR" || exit 1
@@ -78,7 +79,7 @@ find_free_port() {
   printf "%s" "$port"
 }
 
-echo "=== Bot Coordinadores ==="
+echo "=== $BOT_LABEL ==="
 echo "Carpeta: $ROOT_DIR"
 echo
 
@@ -193,7 +194,7 @@ fi
 
 echo
 echo "Bot abierto."
-echo "Dashboard coordinadores: $APP_URL"
+echo "Dashboard: $APP_URL"
 open "$APP_URL"
 
 pause_and_exit 0
