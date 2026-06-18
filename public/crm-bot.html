@@ -141,7 +141,7 @@
     .metric.red .metric-value { color: var(--red); }
     .metric.yellow .metric-value { color: var(--yellow); }
 
-    button, input {
+    button, input, select, textarea {
       min-height: 42px;
       border-radius: var(--radius);
       font: inherit;
@@ -160,12 +160,18 @@
       cursor: not-allowed;
     }
 
-    input {
+    input, select, textarea {
       width: 100%;
       border: 1px solid var(--border);
       padding: 10px 12px;
       color: var(--text);
       background: #fff;
+    }
+
+    textarea {
+      min-height: 142px;
+      resize: vertical;
+      line-height: 1.42;
     }
 
     .btn-primary { background: var(--blue); color: #fff; }
@@ -273,6 +279,32 @@
       color: #1f2937;
     }
 
+    .message-tools {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .message-editor {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .message-label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 780;
+    }
+
+    .preview-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+      margin-bottom: 6px;
+    }
+
     .history-list {
       display: grid;
       gap: 10px;
@@ -309,6 +341,7 @@
       .span-8, .span-4, .span-3 { grid-column: span 12; }
       .topbar { align-items: flex-start; flex-direction: column; }
       .user-grid { grid-template-columns: 1fr; }
+      .message-tools { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -396,11 +429,29 @@
       <div class="panel span-4">
         <div class="panel-title">
           <h2>Mensajes</h2>
-          <span class="muted">Actual</span>
+          <span class="muted">Editor</span>
         </div>
-        <div class="message-box" id="player-message"></div>
-        <div style="height:10px;"></div>
-        <div class="message-box" id="tutor-message"></div>
+        <div class="message-tools">
+          <select id="field-select"></select>
+          <button class="btn-secondary" onclick="insertSelectedField()">Insertar</button>
+          <button class="btn-secondary" onclick="resetMessages()">Restaurar</button>
+        </div>
+        <div class="message-editor">
+          <label class="message-label" for="player-message-input">Jugador</label>
+          <textarea id="player-message-input"></textarea>
+          <div>
+            <div class="preview-label">Vista jugador</div>
+            <div class="message-box" id="player-message"></div>
+          </div>
+        </div>
+        <div class="message-editor">
+          <label class="message-label" for="tutor-message-input">Tutor</label>
+          <textarea id="tutor-message-input"></textarea>
+          <div>
+            <div class="preview-label">Vista tutor</div>
+            <div class="message-box" id="tutor-message"></div>
+          </div>
+        </div>
       </div>
 
       <div class="panel span-12">
@@ -416,17 +467,49 @@
   <script>
     const FLOW = "crmCritical";
     const USER_STORAGE_KEY = "crm_bot_user";
+    const PLAYER_MESSAGE_STORAGE_KEY = "crm_bot_player_message";
+    const TUTOR_MESSAGE_STORAGE_KEY = "crm_bot_tutor_message";
     const LOCAL_API_BASE = "http://localhost:3000";
     const DEFAULT_USERS = ["Ivo Unzaga", "Santiago Muller", "Facundo Lugo"];
     const PLAYER_MESSAGE = "Buenas {nombre}, como va? Soy {responsable} de AFA en GLOOUDS.\n\nChe te escribo para veamos que cosas tenemos podes mejorar de tu perfil para que que los seleccionadores de la AFA te elijan a vos por sobre el resto  ¿Tenés 5 minutos para que te llame?";
     const TUTOR_MESSAGE = "Buenas {tutor} cómo estás? Soy {responsable} de AFA en GLOOUDS. La idea era llamarte para charlar sobre el perfil de tu hijo {jugador}. Tenes 5 min para que te llame?";
+    const FIELD_OPTIONS = [
+      { label: "Nombre jugador", token: "{nombre}" },
+      { label: "Nombre tutor", token: "{tutor}" },
+      { label: "Responsable", token: "{responsable}" },
+      { label: "Telefono jugador", token: "{jugador_telefono}" },
+      { label: "Telefono tutor", token: "{tutor_telefono}" },
+      { label: "Email jugador", token: "{jugador_email}" },
+      { label: "Email tutor", token: "{tutor_email}" },
+      { label: "Edad", token: "{edad}" },
+      { label: "Urgencia", token: "{urgencia}" },
+      { label: "Club", token: "{club}" },
+      { label: "Liga", token: "{liga}" }
+    ];
+    const SAMPLE_VALUES = {
+      nombre: "Juan Perez",
+      jugador: "Juan Perez",
+      jugador_nombre: "Juan Perez",
+      jugador_telefono: "5491100000000",
+      jugador_email: "jugador@email.com",
+      tutor: "Maria Perez",
+      tutor_nombre: "Maria Perez",
+      tutor_telefono: "5491111111111",
+      tutor_email: "tutor@email.com",
+      edad: "15",
+      urgencia: "Critico",
+      club: "Club ejemplo",
+      liga: "Liga ejemplo"
+    };
 
     let selectedUser = "";
     let flowState = { status: "idle", startedAt: null };
     let flowStates = {};
+    let activeMessageInputId = "player-message-input";
 
     function isLocalUi() {
-      return ["localhost", "127.0.0.1", "::1", "[::1]", ""].includes(window.location.hostname);
+      return window.location.protocol.startsWith("http") &&
+        ["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname);
     }
 
     function apiUrl(path) {
@@ -502,8 +585,70 @@
 
     function renderMessagePreview() {
       const responsable = selectedUser || "{responsable}";
-      document.getElementById("player-message").textContent = PLAYER_MESSAGE.replace(/{responsable}/g, responsable);
-      document.getElementById("tutor-message").textContent = TUTOR_MESSAGE.replace(/{responsable}/g, responsable);
+      const values = { ...SAMPLE_VALUES, responsable };
+      const playerTemplate = document.getElementById("player-message-input")?.value || PLAYER_MESSAGE;
+      const tutorTemplate = document.getElementById("tutor-message-input")?.value || TUTOR_MESSAGE;
+      document.getElementById("player-message").textContent = renderPreviewTemplate(playerTemplate, values);
+      document.getElementById("tutor-message").textContent = renderPreviewTemplate(tutorTemplate, values);
+    }
+
+    function renderPreviewTemplate(template, values) {
+      return String(template || "")
+        .replace(/\{([a-zA-Z_]+)\}/g, (match, key) => values[key] ?? match)
+        .trim();
+    }
+
+    function getMessageTemplates() {
+      return {
+        playerMessage: document.getElementById("player-message-input").value || PLAYER_MESSAGE,
+        tutorMessage: document.getElementById("tutor-message-input").value || TUTOR_MESSAGE,
+      };
+    }
+
+    function saveMessageTemplates() {
+      const templates = getMessageTemplates();
+      localStorage.setItem(PLAYER_MESSAGE_STORAGE_KEY, templates.playerMessage);
+      localStorage.setItem(TUTOR_MESSAGE_STORAGE_KEY, templates.tutorMessage);
+      renderMessagePreview();
+    }
+
+    function initMessageEditor() {
+      document.getElementById("field-select").innerHTML = FIELD_OPTIONS
+        .map((field) => `<option value="${escapeHtml(field.token)}">${escapeHtml(field.label)}</option>`)
+        .join("");
+
+      const playerInput = document.getElementById("player-message-input");
+      const tutorInput = document.getElementById("tutor-message-input");
+
+      playerInput.value = localStorage.getItem(PLAYER_MESSAGE_STORAGE_KEY) || PLAYER_MESSAGE;
+      tutorInput.value = localStorage.getItem(TUTOR_MESSAGE_STORAGE_KEY) || TUTOR_MESSAGE;
+
+      [playerInput, tutorInput].forEach((input) => {
+        input.addEventListener("focus", () => {
+          activeMessageInputId = input.id;
+        });
+        input.addEventListener("input", saveMessageTemplates);
+      });
+
+      renderMessagePreview();
+    }
+
+    function insertSelectedField() {
+      const token = document.getElementById("field-select").value;
+      const input = document.getElementById(activeMessageInputId);
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? input.value.length;
+      input.value = `${input.value.slice(0, start)}${token}${input.value.slice(end)}`;
+      const nextPosition = start + token.length;
+      input.focus();
+      input.setSelectionRange(nextPosition, nextPosition);
+      saveMessageTemplates();
+    }
+
+    function resetMessages() {
+      document.getElementById("player-message-input").value = PLAYER_MESSAGE;
+      document.getElementById("tutor-message-input").value = TUTOR_MESSAGE;
+      saveMessageTemplates();
     }
 
     function updateFlowButtons() {
@@ -583,6 +728,7 @@
       const afterSendSettleMs = readSecondsAsMs("after-send-input", 15);
       const betweenContactsMs = readSecondsAsMs("between-contacts-input", 90);
       const delayMs = readSecondsAsMs("between-players-input", 90);
+      const { playerMessage, tutorMessage } = getMessageTemplates();
       flowState = { status: "running", startedAt: new Date().toISOString() };
       updateFlowButtons();
       updateProgress({
@@ -607,6 +753,8 @@
             afterSendSettleMs,
             betweenContactsMs,
             delayMs,
+            playerMessage,
+            tutorMessage,
           })
         });
         const data = await res.json();
@@ -799,7 +947,7 @@
       };
     }
 
-    renderMessagePreview();
+    initMessageEditor();
     loadUsers();
     initEvents();
   </script>

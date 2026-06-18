@@ -29,6 +29,7 @@ function isLocalOrigin(origin) {
 
 function isAllowedCorsOrigin(origin) {
   if (!origin) return true;
+  if (origin === "null") return true;
   const normalized = normalizeOrigin(origin);
   return isLocalOrigin(normalized) || getAllowedCorsOrigins().includes(normalized);
 }
@@ -1043,6 +1044,8 @@ app.post("/api/run-crm-critical", async (req, res) => {
     const rawDelayMs = Number(req.body?.delayMs);
     const rawBetweenContactsMs = Number(req.body?.betweenContactsMs);
     const rawAfterSendSettleMs = Number(req.body?.afterSendSettleMs);
+    const playerMessage = String(req.body?.playerMessage || "").trim();
+    const tutorMessage = String(req.body?.tutorMessage || "").trim();
     const delayMs = Number.isFinite(rawDelayMs) && rawDelayMs >= 0 ? rawDelayMs : undefined;
     const betweenContactsMs =
       Number.isFinite(rawBetweenContactsMs) && rawBetweenContactsMs >= 0
@@ -1079,6 +1082,8 @@ app.post("/api/run-crm-critical", async (req, res) => {
           ...(delayMs != null ? { delayMs } : {}),
           ...(betweenContactsMs != null ? { betweenContactsMs } : {}),
           ...(afterSendSettleMs != null ? { afterSendSettleMs } : {}),
+          ...(playerMessage ? { playerMessage } : {}),
+          ...(tutorMessage ? { tutorMessage } : {}),
         }).then(resolve, reject);
       });
     });

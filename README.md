@@ -134,6 +134,8 @@ No subir a GitHub:
 
 ## GitHub
 
+Repositorio: `https://github.com/Ivounzaga/Bot-coordinadores`
+
 GitHub sirve para versionar y compartir el codigo. No sirve, por si solo, para alojar el bot completo porque Puppeteer y la sesion de WhatsApp deben correr en una maquina con navegador y sesion local.
 
 Para que sea usable por otros usuarios sin API paga, la arquitectura recomendada es:
@@ -141,3 +143,5 @@ Para que sea usable por otros usuarios sin API paga, la arquitectura recomendada
 - Repo GitHub con el codigo.
 - App local o servidor propio por usuario.
 - Sesion de WhatsApp guardada localmente en cada maquina.
+
+La pantalla del bot de jugadores permite editar los mensajes antes de correr. Los campos personalizables se insertan con llaves, por ejemplo `{nombre}`, `{tutor}`, `{responsable}`, `{jugador_telefono}` o `{club}`.

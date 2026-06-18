@@ -6,6 +6,13 @@ Este instructivo es solo para el bot de jugadores criticos del CRM.
 
 Descargar el proyecto completo desde GitHub. No descargar archivos sueltos.
 
+Repositorio: `https://github.com/Ivounzaga/Bot-coordinadores`
+
+Opciones:
+
+- Boton verde `Code` > `Download ZIP`.
+- O clonar con `git clone https://github.com/Ivounzaga/Bot-coordinadores.git`.
+
 El bot necesita, como minimo:
 
 - `package.json`

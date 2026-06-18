@@ -285,14 +285,23 @@ function renderTemplate(template, player, profile, contact) {
   const playerName = getPlayerName(player);
   const tutorName = getTutorName(player);
   const responsibleName = normalizeWhitespace(profile.nombre);
+  const club = player.clubes || {};
   const values = {
     nombre: playerName,
     jugador: playerName,
     jugador_nombre: playerName,
+    jugador_email: cleanText(player.email),
+    jugador_telefono: cleanText(player.telefono || player.telefono_priv),
+    edad: cleanText(player.edad),
     tutor: tutorName,
     tutor_nombre: tutorName,
+    tutor_telefono: cleanText(player.tutor_telefono),
+    tutor_email: cleanText(player.tutor_email),
     responsable: responsibleName,
     contacto: contact?.label || "",
+    urgencia: player.urgencia || getUrgency(player),
+    club: cleanText(club.nombre),
+    liga: cleanText(club.liga),
   };
 
   return normalizeResponsiblePlaceholder(template)
@@ -325,9 +334,10 @@ function resolveConfigMessage(configRows, type, urgency) {
   }
 }
 
-function buildPlayerMessage(player, profile, configRows) {
+function buildPlayerMessage(player, profile, configRows, templates = {}) {
   const urgency = player.urgencia || getUrgency(player);
   const template =
+    cleanText(templates.playerMessage) ||
     cleanText(process.env.CRM_PLAYER_MESSAGE) ||
     DEFAULT_PLAYER_MESSAGES[urgency] ||
     DEFAULT_PLAYER_MESSAGES.Tranquilo;
@@ -335,8 +345,11 @@ function buildPlayerMessage(player, profile, configRows) {
   return renderTemplate(template, player, profile, { label: "jugador" });
 }
 
-function buildTutorMessage(player, profile) {
-  const template = cleanText(process.env.CRM_TUTOR_MESSAGE) || DEFAULT_TUTOR_MESSAGE;
+function buildTutorMessage(player, profile, templates = {}) {
+  const template =
+    cleanText(templates.tutorMessage) ||
+    cleanText(process.env.CRM_TUTOR_MESSAGE) ||
+    DEFAULT_TUTOR_MESSAGE;
   return renderTemplate(template, player, profile, { label: "tutor" });
 }
 
@@ -678,7 +691,7 @@ function filterCriticalCandidates(rows) {
   });
 }
 
-function buildContactsForPlayer(player, profile, configRows) {
+function buildContactsForPlayer(player, profile, configRows, templates = {}) {
   const contacts = [];
   const isMinor = isTruthy(player.es_menor);
   const playerPhone = sanitizeArgentinaPhone(player.telefono || player.telefono_priv);
@@ -692,7 +705,7 @@ function buildContactsForPlayer(player, profile, configRows) {
         role: "tutor",
         label: tutorName || "Tutor",
         phone: tutorPhone,
-        message: buildTutorMessage(player, profile),
+        message: buildTutorMessage(player, profile, templates),
       });
     }
 
@@ -701,7 +714,7 @@ function buildContactsForPlayer(player, profile, configRows) {
         role: "jugador",
         label: playerName,
         phone: playerPhone,
-        message: buildPlayerMessage(player, profile, configRows),
+        message: buildPlayerMessage(player, profile, configRows, templates),
       });
     }
   } else if (playerPhone) {
@@ -709,19 +722,19 @@ function buildContactsForPlayer(player, profile, configRows) {
       role: "jugador",
       label: playerName,
       phone: playerPhone,
-      message: buildPlayerMessage(player, profile, configRows),
+      message: buildPlayerMessage(player, profile, configRows, templates),
     });
   }
 
   return contacts;
 }
 
-function prepareWorkItems(rows, profile, configRows, limit) {
+function prepareWorkItems(rows, profile, configRows, limit, templates = {}) {
   const seenPhones = new Set();
   const selectedRows = rows.slice(0, limit || rows.length);
 
   return selectedRows.map((player) => {
-    const rawContacts = buildContactsForPlayer(player, profile, configRows);
+    const rawContacts = buildContactsForPlayer(player, profile, configRows, templates);
     const contacts = [];
     const skippedContacts = [];
 
@@ -1758,6 +1771,8 @@ function buildRuntimeOptions(options = {}) {
       DEFAULT_AFTER_SEND_SETTLE_MS
     ),
     operatorName: cleanText(process.env.CRM_OPERATOR_NAME),
+    playerMessage: "",
+    tutorMessage: "",
     ...options,
   };
 }
@@ -1796,7 +1811,10 @@ async function runCrmCriticalBot(sendProgress = () => {}, options = {}) {
   ]);
 
   const candidates = filterCriticalCandidates(rawRows);
-  const allWorkItems = prepareWorkItems(candidates, profile, configRows);
+  const allWorkItems = prepareWorkItems(candidates, profile, configRows, undefined, {
+    playerMessage: runtimeOptions.playerMessage,
+    tutorMessage: runtimeOptions.tutorMessage,
+  });
 
   let workItems = [];
   let claimSkipped = [];
